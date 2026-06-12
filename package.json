@@ -1,0 +1,42 @@
+{
+  "name": "atlas",
+  "private": true,
+  "version": "0.0.0",
+  "type": "module",
+  "scripts": {
+    "dev": "concurrently \"npm --prefix server run dev\" \"vite\"",
+    "dev:web": "vite",
+    "dev:full": "concurrently \"npm --prefix server run dev\" \"vite\"",
+    "build": "vite build",
+    "lint": "eslint .",
+    "preview": "vite preview",
+    "server": "npm --prefix server run dev",
+    "server:start": "npm --prefix server run start",
+    "contracts:arc:compile": "npm --prefix contracts/arc run compile",
+    "contracts:arc:test": "npm --prefix contracts/arc run test"
+  },
+  "dependencies": {
+    "@privy-io/chains": "latest",
+    "@privy-io/react-auth": "latest",
+    "framer-motion": "^12.40.0",
+    "genlayer-js": "^1.1.8",
+    "lucide-react": "^1.17.0",
+    "react": "^19.2.6",
+    "react-dom": "^19.2.6",
+    "react-router-dom": "^7.17.0",
+    "recharts": "^3.8.1",
+    "viem": "^2.38.4"
+  },
+  "devDependencies": {
+    "@eslint/js": "^10.0.1",
+    "@types/react": "^19.2.14",
+    "@types/react-dom": "^19.2.3",
+    "@vitejs/plugin-react": "^6.0.1",
+    "concurrently": "^9.2.1",
+    "eslint": "^10.3.0",
+    "eslint-plugin-react-hooks": "^7.1.1",
+    "eslint-plugin-react-refresh": "^0.5.2",
+    "globals": "^17.6.0",
+    "vite": "^8.0.12"
+  }
+}

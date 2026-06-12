@@ -1,0 +1,21 @@
+{
+  "name": "atlas-relay",
+  "private": true,
+  "version": "0.0.0",
+  "type": "module",
+  "scripts": {
+    "dev": "node src/index.js",
+    "start": "node src/index.js"
+  },
+  "dependencies": {
+    "@privy-io/node": "latest",
+    "cors": "^2.8.5",
+    "dotenv": "^16.6.1",
+    "express": "^5.1.0",
+    "genlayer-js": "^1.1.8",
+    "multer": "^2.0.2",
+    "stripe": "^18.3.0",
+    "viem": "^2.52.0",
+    "zod": "^4.1.12"
+  }
+}
