@@ -1,10 +1,5 @@
-import { StrictMode } from 'react'
 import { createRoot } from 'react-dom/client'
 import './index.css'
 import { AtlasRoot } from './boot/AtlasRoot.jsx'
 
-createRoot(document.getElementById('root')).render(
-  <StrictMode>
-    <AtlasRoot />
-  </StrictMode>,
-)
+createRoot(document.getElementById('root')).render(<AtlasRoot />)

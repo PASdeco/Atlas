@@ -16,8 +16,8 @@
     "contracts:arc:test": "npm --prefix contracts/arc run test"
   },
   "dependencies": {
-    "@privy-io/chains": "latest",
-    "@privy-io/react-auth": "latest",
+    "@privy-io/chains": "0.3.0",
+    "@privy-io/react-auth": "3.29.2",
     "framer-motion": "^12.40.0",
     "genlayer-js": "^1.1.8",
     "lucide-react": "^1.17.0",

@@ -54,8 +54,6 @@ import {
   XCircle,
 } from 'lucide-react'
 import {
-  Area,
-  AreaChart,
   Bar,
   BarChart,
   CartesianGrid,
@@ -164,29 +162,6 @@ const whyAtlas = [
   },
 ]
 
-const homeStats = [
-  {
-    label: 'Total Pool Size',
-    value: 2847392,
-    formatter: (value) => moneyFormatter.format(value),
-  },
-  {
-    label: 'Claims Paid This Month',
-    value: 1284,
-    formatter: (value) => wholeNumberFormatter.format(value),
-  },
-  {
-    label: 'Average Payout Time',
-    value: 47,
-    formatter: (value) => `${Math.round(value)} seconds`,
-  },
-  {
-    label: 'Active Members',
-    value: 9431,
-    formatter: (value) => wholeNumberFormatter.format(value),
-  },
-]
-
 const faqItems = [
   {
     question: 'What is Atlas?',
@@ -211,7 +186,7 @@ const faqItems = [
   {
     question: 'How fast are payouts processed?',
     answer:
-      'Simple claims can settle in under a minute, with Atlas targeting an average payout time of 47 seconds for clean evidence sets.',
+      'Atlas is designed to move clean claims quickly once coverage, evidence, and verdict data are in place, with final timing visible through the live claim flow.',
   },
   {
     question: 'What happens if my claim is rejected?',
@@ -237,37 +212,6 @@ const faqItems = [
     question: 'What coverage categories does Atlas support?',
     answer:
       'Atlas currently focuses on mobility, housing, travel, and experiences, with modular policy packs for each vertical.',
-  },
-]
-
-const claimActivity = [
-  { day: 'Mon', approved: 12, pending: 3 },
-  { day: 'Tue', approved: 19, pending: 5 },
-  { day: 'Wed', approved: 16, pending: 4 },
-  { day: 'Thu', approved: 23, pending: 6 },
-  { day: 'Fri', approved: 21, pending: 4 },
-  { day: 'Sat', approved: 18, pending: 2 },
-  { day: 'Sun', approved: 25, pending: 5 },
-]
-
-const recentClaims = [
-  {
-    type: 'Airport baggage delay',
-    amount: '$120',
-    date: 'Today',
-    status: 'Approved',
-  },
-  {
-    type: 'Auto glass replacement',
-    amount: '$365',
-    date: 'Yesterday',
-    status: 'Pending',
-  },
-  {
-    type: 'Concert cancellation',
-    amount: '$95',
-    date: '2 days ago',
-    status: 'Rejected',
   },
 ]
 
@@ -328,22 +272,6 @@ const pricingPlans = [
       'Weather disruption',
     ],
   },
-]
-
-const poolComposition = [
-  { name: 'Immediate payouts', value: 38, color: '#c3ea8d' },
-  { name: 'Reserve buffer', value: 27, color: '#2a7876' },
-  { name: 'Reinsurance vault', value: 21, color: '#163c3d' },
-  { name: 'Protocol revenue', value: 14, color: '#eff4ef' },
-]
-
-const reserveFlow = [
-  { month: 'Jan', pool: 2.1, reserve: 1.2, payouts: 0.46 },
-  { month: 'Feb', pool: 2.24, reserve: 1.28, payouts: 0.51 },
-  { month: 'Mar', pool: 2.36, reserve: 1.34, payouts: 0.58 },
-  { month: 'Apr', pool: 2.52, reserve: 1.4, payouts: 0.63 },
-  { month: 'May', pool: 2.67, reserve: 1.47, payouts: 0.68 },
-  { month: 'Jun', pool: 2.84, reserve: 1.59, payouts: 0.72 },
 ]
 
 const shellNav = [
@@ -795,6 +723,23 @@ function MarketingNav() {
 }
 
 function HeroSection() {
+  const { overview } = useAtlasApp()
+
+  const heroStats = [
+    {
+      value: wholeNumberFormatter.format(overview.pool.claimsPaid || 0),
+      label: 'claims resolved on Atlas',
+    },
+    {
+      value: wholeNumberFormatter.format(overview.pool.activeMembers || 0),
+      label: 'active members on-chain',
+    },
+    {
+      value: 'USDC',
+      label: 'stable payouts only',
+    },
+  ]
+
   return (
     <section className="hero-section">
       <div className="hero-backdrop">
@@ -814,18 +759,12 @@ function HeroSection() {
               </a>
             </div>
             <div className="hero-microstats">
-              <div>
-                <strong>47 sec</strong>
-                <span>avg payout time</span>
-              </div>
-              <div>
-                <strong>9,431</strong>
-                <span>active members</span>
-              </div>
-              <div>
-                <strong>USDC</strong>
-                <span>stable payouts only</span>
-              </div>
+              {heroStats.map((stat) => (
+                <div key={stat.label}>
+                  <strong>{stat.value}</strong>
+                  <span>{stat.label}</span>
+                </div>
+              ))}
             </div>
           </Reveal>
 
@@ -835,7 +774,7 @@ function HeroSection() {
               <div className="hero-image-overlay" aria-hidden="true" />
               <div className="hero-floating-badge top">
                 <BadgeCheck size={18} />
-                Claim approved in 42 seconds
+                GenLayer jury verdict finalized on-chain
               </div>
             </div>
           </Reveal>
@@ -959,6 +898,30 @@ function WhyAtlasSection() {
 }
 
 function PoolStatsSection() {
+  const { overview } = useAtlasApp()
+  const homeStats = [
+    {
+      label: 'Total Pool Size',
+      value: overview.pool.poolSizeUsdc,
+      formatter: (value) => moneyFormatter.format(value),
+    },
+    {
+      label: 'Claims Paid',
+      value: overview.pool.claimsPaid,
+      formatter: (value) => wholeNumberFormatter.format(value),
+    },
+    {
+      label: 'Protocol Fees Collected',
+      value: overview.pool.protocolFeeCollectedUsdc,
+      formatter: (value) => moneyFormatter.format(value),
+    },
+    {
+      label: 'Active Members',
+      value: overview.pool.activeMembers,
+      formatter: (value) => wholeNumberFormatter.format(value),
+    },
+  ]
+
   return (
     <section id="pool-stats-home" className="section section-contrast">
       <SectionHeading
@@ -1224,7 +1187,10 @@ function DashboardPage() {
     {
       label: 'Pool Balance',
       value: moneyFormatter.format(overview.pool.poolSizeUsdc),
-      detail: `Reserve coverage ${overview.pool.reserveCoverageRatio}%`,
+      detail:
+        overview.pool.reserveCoverageRatio > 0
+          ? `Reserve coverage ${overview.pool.reserveCoverageRatio}%`
+          : 'Reserve coverage will appear after real claims accumulate.',
       variant: 'accent',
     },
     {
@@ -1247,10 +1213,11 @@ function DashboardPage() {
     },
   ]
 
-  const liveClaims =
-    Array.isArray(overview.recentClaims) && overview.recentClaims.length > 0
-      ? overview.recentClaims
-      : recentClaims
+  const liveClaims = Array.isArray(overview.recentClaims) ? overview.recentClaims : []
+  const recentActivity = Array.isArray(overview.recentActivity) ? overview.recentActivity : []
+  const hasRecentActivity = recentActivity.some(
+    (entry) => Number(entry.approved || 0) > 0 || Number(entry.pending || 0) > 0 || Number(entry.rejected || 0) > 0,
+  )
 
   return (
     <motion.main
@@ -1283,50 +1250,64 @@ function DashboardPage() {
               <span className="eyebrow muted">7-day activity</span>
               <h3>Claim throughput</h3>
             </div>
-            <span className="status-pill good">Live</span>
+            <span className={`status-pill ${hasRecentActivity ? 'good' : 'pending'}`}>
+              {hasRecentActivity ? 'Live' : 'No activity yet'}
+            </span>
           </div>
-          <ResponsiveContainer width="100%" height={280}>
-            <BarChart data={claimActivity} barGap={8}>
-              <CartesianGrid stroke="rgba(22, 60, 61, 0.08)" vertical={false} />
-              <XAxis dataKey="day" axisLine={false} tickLine={false} />
-              <YAxis axisLine={false} tickLine={false} />
-              <Tooltip content={<ChartTooltip />} cursor={{ fill: 'rgba(195, 234, 141, 0.16)' }} />
-              <Bar dataKey="approved" fill="#2a7876" radius={[10, 10, 0, 0]} />
-              <Bar dataKey="pending" fill="#c3ea8d" radius={[10, 10, 0, 0]} />
-            </BarChart>
-          </ResponsiveContainer>
+          {hasRecentActivity ? (
+            <ResponsiveContainer width="100%" height={280}>
+              <BarChart data={recentActivity} barGap={8}>
+                <CartesianGrid stroke="rgba(22, 60, 61, 0.08)" vertical={false} />
+                <XAxis dataKey="day" axisLine={false} tickLine={false} />
+                <YAxis allowDecimals={false} axisLine={false} tickLine={false} />
+                <Tooltip content={<ChartTooltip />} cursor={{ fill: 'rgba(195, 234, 141, 0.16)' }} />
+                <Bar dataKey="approved" fill="#2a7876" radius={[10, 10, 0, 0]} />
+                <Bar dataKey="pending" fill="#c3ea8d" radius={[10, 10, 0, 0]} />
+                <Bar dataKey="rejected" fill="#d79292" radius={[10, 10, 0, 0]} />
+              </BarChart>
+            </ResponsiveContainer>
+          ) : (
+            <EmptyPanelState
+              title="No settled or pending claims yet."
+              description="Claim throughput will appear here after members submit real claims through Atlas."
+            />
+          )}
         </article>
 
         <article className="glass-panel signal-panel">
           <div className="panel-header">
             <div>
-              <span className="eyebrow muted">AI Jury</span>
-              <h3>Verdict quality</h3>
+              <span className="eyebrow muted">Claim routing</span>
+              <h3>Live settlement state</h3>
             </div>
             <BrainCircuit size={20} />
           </div>
           <div className="signal-stack">
             <SignalRow
-              label="Evidence confidence"
-              value={`${overview.signal.evidenceConfidence}%`}
+              label="Approved claims"
+              value={String(overview.member.approvedClaims).padStart(2, '0')}
               tone="good"
             />
             <SignalRow
-              label="Average deliberation"
-              value={`${overview.signal.averageDeliberationSeconds} sec`}
+              label="Pending claims"
+              value={String(overview.member.pendingClaims).padStart(2, '0')}
               tone="accent"
             />
             <SignalRow
-              label="Fraud alerts"
-              value={String(overview.signal.fraudAlerts).padStart(2, '0')}
+              label="Rejected claims"
+              value={String(
+                Math.max(0, overview.recentClaims.length - overview.member.approvedClaims - overview.member.pendingClaims),
+              ).padStart(2, '0')}
               tone="warn"
             />
           </div>
           <div className="signal-callout">
             <ShieldCheck size={20} />
-            {`Atlas is holding ${moneyFormatter.format(
-              overview.pool.reserveBufferUsdc,
-            )} in reserve while verdicts average under a minute.`}
+            {overview.pool.reserveBufferUsdc > 0
+              ? `Atlas is holding ${moneyFormatter.format(
+                  overview.pool.reserveBufferUsdc,
+                )} in live Arc reserves while GenLayer verdicts route payouts back to the pool contract.`
+              : 'Atlas will show live Arc reserves here as soon as pool funds and claim activity are available.'}
           </div>
         </article>
       </section>
@@ -1345,18 +1326,25 @@ function DashboardPage() {
           </div>
 
           <div className="claim-list">
-            {liveClaims.map((claim) => (
-              <div key={`${claim.type}-${claim.date}-${claim.id || ''}`} className="claim-list-item">
-                <div>
-                  <strong>{claim.type}</strong>
-                  <span>{claim.date || `Claim #${claim.id}`}</span>
+            {liveClaims.length > 0 ? (
+              liveClaims.map((claim) => (
+                <div key={`${claim.type}-${claim.date}-${claim.id || ''}`} className="claim-list-item">
+                  <div>
+                    <strong>{claim.type}</strong>
+                    <span>{claim.date || `Claim #${claim.id}`}</span>
+                  </div>
+                  <div className="claim-list-meta">
+                    <strong>{claim.amount}</strong>
+                    <span className={`status-pill ${claim.status.toLowerCase()}`}>{claim.status}</span>
+                  </div>
                 </div>
-                <div className="claim-list-meta">
-                  <strong>{claim.amount}</strong>
-                  <span className={`status-pill ${claim.status.toLowerCase()}`}>{claim.status}</span>
-                </div>
-              </div>
-            ))}
+              ))
+            ) : (
+              <EmptyPanelState
+                title="No member claims yet."
+                description="Claims appear here only after a real Atlas submission reaches Arc and starts the GenLayer verdict flow."
+              />
+            )}
           </div>
         </article>
 
@@ -1416,11 +1404,9 @@ function ClaimPage() {
   const [result, setResult] = useState(null)
   const [form, setForm] = useState({
     category: 'Auto',
-    description:
-      'Rear-side impact at a traffic light. Uploaded dashcam stills and repair estimate.',
-    files: ['dashcam-frame.jpg', 'repair-estimate.pdf'],
-    evidenceState: 'approved',
-    requestedAmount: '180',
+    description: '',
+    files: [],
+    requestedAmount: '10',
   })
 
   const outcome = getClaimOutcome(result)
@@ -1435,7 +1421,6 @@ function ClaimPage() {
         category: form.category,
         description: form.description,
         files: form.files,
-        evidenceState: form.evidenceState,
         requestedAmount: Number(form.requestedAmount),
       })
       setResult(claim)
@@ -1594,28 +1579,12 @@ function ClaimPage() {
                     <p>{form.description}</p>
                   </div>
                 </div>
-                <div className="evidence-state">
-                  <span>Evidence quality</span>
-                  <div className="segmented-control">
-                    <button
-                      type="button"
-                      className={form.evidenceState === 'approved' ? 'active' : ''}
-                      onClick={() =>
-                        setForm((current) => ({ ...current, evidenceState: 'approved' }))
-                      }
-                    >
-                      Complete evidence
-                    </button>
-                    <button
-                      type="button"
-                      className={form.evidenceState === 'reviewed' ? 'active' : ''}
-                      onClick={() =>
-                        setForm((current) => ({ ...current, evidenceState: 'reviewed' }))
-                      }
-                    >
-                      Needs review
-                    </button>
-                  </div>
+                <div className="review-card full">
+                  <span>Verdict path</span>
+                  <p>
+                    Atlas will submit this claim on Arc, queue it for the GenLayer intelligent
+                    contract, and wait for StudioNet consensus before any payout can resolve.
+                  </p>
                 </div>
               </div>
             )}
@@ -1863,10 +1832,12 @@ function PlansPage() {
 
 function PoolStatsPage() {
   const { overview, lastError, statusMessage } = useAtlasApp()
+  const poolComposition = Array.isArray(overview.poolComposition) ? overview.poolComposition : []
+  const hasPoolComposition = poolComposition.length > 0
 
   const poolMetrics = [
     ['Total pool size', overview.pool.poolSizeUsdc, (value) => moneyFormatter.format(value)],
-    ['Claims paid', overview.pool.claimsPaidThisMonth, (value) => wholeNumberFormatter.format(value)],
+    ['Claims paid', overview.pool.claimsPaid, (value) => wholeNumberFormatter.format(value)],
     [
       'Protocol fee collected',
       overview.pool.protocolFeeCollectedUsdc,
@@ -1909,70 +1880,81 @@ function PoolStatsPage() {
           </div>
           <div className="donut-layout">
             <div className="donut-wrap">
-              <ResponsiveContainer width="100%" height={280}>
-                <RePieChart>
-                  <Pie
-                    data={poolComposition}
-                    dataKey="value"
-                    innerRadius={78}
-                    outerRadius={110}
-                    paddingAngle={4}
-                  >
-                    {poolComposition.map((entry) => (
-                      <Cell key={entry.name} fill={entry.color} />
-                    ))}
-                  </Pie>
-                  <Tooltip content={<ChartTooltip />} />
-                </RePieChart>
-              </ResponsiveContainer>
+              {hasPoolComposition ? (
+                <ResponsiveContainer width="100%" height={280}>
+                  <RePieChart>
+                    <Pie
+                      data={poolComposition}
+                      dataKey="value"
+                      innerRadius={78}
+                      outerRadius={110}
+                      paddingAngle={4}
+                    >
+                      {poolComposition.map((entry) => (
+                        <Cell key={entry.name} fill={entry.color} />
+                      ))}
+                    </Pie>
+                    <Tooltip content={<ChartTooltip />} />
+                  </RePieChart>
+                </ResponsiveContainer>
+              ) : (
+                <EmptyPanelState
+                  title="No pool composition yet."
+                  description="This breakdown appears after Atlas has live on-chain pool or treasury balances to display."
+                />
+              )}
             </div>
-            <div className="legend-list">
-              {poolComposition.map((item) => (
-                <div key={item.name} className="legend-row">
-                  <span className="legend-swatch" style={{ backgroundColor: item.color }} />
-                  <div>
-                    <strong>{item.name}</strong>
-                    <span>{item.value}% allocation</span>
+            {hasPoolComposition ? (
+              <div className="legend-list">
+                {poolComposition.map((item) => (
+                  <div key={item.name} className="legend-row">
+                    <span className="legend-swatch" style={{ backgroundColor: item.color }} />
+                    <div>
+                      <strong>{item.name}</strong>
+                      <span>{`${item.value}% allocation`}</span>
+                    </div>
                   </div>
-                </div>
-              ))}
-            </div>
+                ))}
+              </div>
+            ) : null}
           </div>
         </article>
 
         <article className="glass-panel chart-panel">
           <div className="panel-header">
             <div>
-              <span className="eyebrow muted">Growth</span>
-              <h3>Reserve and payout flow</h3>
+              <span className="eyebrow muted">Settlement</span>
+              <h3>Live pool status</h3>
             </div>
             <Activity size={20} />
           </div>
-          <ResponsiveContainer width="100%" height={280}>
-            <AreaChart data={reserveFlow}>
-              <defs>
-                <linearGradient id="poolGradient" x1="0" x2="0" y1="0" y2="1">
-                  <stop offset="5%" stopColor="#2a7876" stopOpacity={0.45} />
-                  <stop offset="95%" stopColor="#2a7876" stopOpacity={0.02} />
-                </linearGradient>
-                <linearGradient id="reserveGradient" x1="0" x2="0" y1="0" y2="1">
-                  <stop offset="5%" stopColor="#c3ea8d" stopOpacity={0.5} />
-                  <stop offset="95%" stopColor="#c3ea8d" stopOpacity={0.08} />
-                </linearGradient>
-              </defs>
-              <CartesianGrid stroke="rgba(22, 60, 61, 0.08)" vertical={false} />
-              <XAxis dataKey="month" axisLine={false} tickLine={false} />
-              <YAxis axisLine={false} tickLine={false} />
-              <Tooltip content={<ChartTooltip />} />
-              <Area type="monotone" dataKey="pool" stroke="#163c3d" fill="url(#poolGradient)" />
-              <Area
-                type="monotone"
-                dataKey="reserve"
-                stroke="#9ecf59"
-                fill="url(#reserveGradient)"
-              />
-            </AreaChart>
-          </ResponsiveContainer>
+          <div className="signal-stack">
+            <SignalRow
+              label="Community pool balance"
+              value={moneyFormatter.format(overview.pool.poolSizeUsdc)}
+              tone="good"
+            />
+            <SignalRow
+              label="Treasury collected"
+              value={moneyFormatter.format(overview.pool.treasuryBalanceUsdc)}
+              tone="accent"
+            />
+            <SignalRow
+              label="Reserve coverage ratio"
+              value={
+                overview.pool.reserveCoverageRatio > 0
+                  ? `${overview.pool.reserveCoverageRatio}%`
+                  : 'N/A'
+              }
+              tone="warn"
+            />
+          </div>
+          <div className="signal-callout">
+            <ShieldCheck size={20} />
+            {overview.pool.poolSizeUsdc > 0
+              ? 'These values come from the live Arc pool snapshot and real Atlas claim records.'
+              : 'Atlas will replace this placeholder state with live Arc settlement data once the pool has funded activity.'}
+          </div>
         </article>
       </section>
     </motion.main>
@@ -2191,6 +2173,15 @@ function StatusBanner({ message, error }) {
   return (
     <div className={`status-banner ${error ? 'error' : 'success'}`}>
       {error || message}
+    </div>
+  )
+}
+
+function EmptyPanelState({ title, description }) {
+  return (
+    <div className="empty-panel-state">
+      <strong>{title}</strong>
+      <p>{description}</p>
     </div>
   )
 }

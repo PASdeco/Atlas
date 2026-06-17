@@ -1,128 +1,190 @@
 # Atlas
 
-Atlas is an AI-powered decentralized consumer insurance experience built around two networks:
+Atlas is a dual-chain consumer protection protocol that keeps money movement on Arc Testnet and claim adjudication inside a GenLayer intelligent contract.
 
-- Arc Testnet is the money layer. Premiums, fee splitting, pooled reserves, and claim payouts all happen in USDC on Arc.
-- GenLayer StudioNet is the intelligence layer. Claim evidence is reviewed by an on-chain AI jury contract that returns a verdict back into the Arc payout flow.
+Members activate coverage with USDC, file a claim through a familiar web interface, and receive a verdict that is produced inside GenLayer StudioNet consensus before payout is resolved on Arc.
 
-The current codebase is a full-stack prototype designed to prove the end-to-end user journey:
+> Status: testnet prototype  
+> Money layer: Arc Testnet  
+> Intelligence layer: GenLayer StudioNet  
+> Data policy: Atlas renders live data or honest empty states, never fabricated balances
 
-1. A member signs in with Privy using Google or a crypto wallet.
-2. Atlas creates or connects an Arc-compatible wallet.
-3. A premium is paid in test mode through a sponsored Arc USDC deposit or directly from the wallet.
-4. Atlas files the claim on Arc, sends the evidence package to GenLayer StudioNet, and resolves the verdict back into Arc.
-5. Approved claims are paid from the pool in USDC, with the Atlas treasury fee collected atomically inside the pool contract.
+## Why Atlas
 
-## Architecture
+Traditional claims systems are slow, opaque, and operationally expensive. Atlas explores a different model:
 
-### Frontend
+- stablecoin-native coverage using USDC
+- transparent pooled reserves and protocol fee accounting on-chain
+- deterministic payout execution through smart contracts
+- AI-assisted claim review performed inside a GenLayer intelligent contract instead of a hidden backend workflow
+- consumer-friendly onboarding with Google sign-in or wallet connection
 
-- `src/` contains the React application and product UI.
-- `src/lib/atlasAppContext.jsx` coordinates login state, wallet flows, overview loading, premium actions, and claim submission.
-- `src/lib/privyConfig.js` configures Privy for Arc Testnet with embedded wallet creation for non-crypto users.
+## What Atlas Does Today
 
-### Shared config
+- Onboards members with Privy using Google or wallet login
+- Creates or connects an Arc-compatible wallet
+- Accepts premium payments through direct wallet deposit, or card-triggered sponsored deposits when configured
+- Splits each premium between the community pool and Atlas treasury inside `AtlasPool.sol`
+- Registers claims on Arc through `AtlasClaims.sol`
+- Sends evidence metadata to a GenLayer intelligent contract for verdict generation
+- Resolves approved or rejected claims back on Arc and executes payout from the pool
+- Surfaces live overview, coverage, pool, and claim activity data in the frontend
 
-- `shared/atlasNetworks.js` stores canonical Arc Testnet and GenLayer StudioNet constants.
-- `shared/atlasAbis.js` exposes the Arc contract ABIs used by both the frontend and relay.
+## System Architecture
 
-### Arc money layer
+```mermaid
+flowchart LR
+  U[Member]
+  F[React frontend]
+  R[Atlas relay API]
 
-- `contracts/arc/contracts/AtlasPool.sol`
-  - Holds the community USDC pool
-  - Splits each premium deposit atomically into pool funds and Atlas treasury revenue
-  - Uses configurable `feeBps` and treasury wallet settings
-- `contracts/arc/contracts/AtlasClaims.sol`
-  - Records claims
-  - Queues claims for verdict review
-  - Accepts a relayed verdict and triggers payout execution through the pool
-- `contracts/arc/contracts/MockUSDC.sol`
-  - Local test token used by Hardhat tests
+  subgraph ARC[Arc Testnet - money layer]
+    P[AtlasPool.sol]
+    C[AtlasClaims.sol]
+  end
 
-### GenLayer StudioNet intelligence layer
+  subgraph GEN[GenLayer StudioNet - intelligence layer]
+    J[atlas_jury.py]
+  end
 
-- `contracts/genlayer/contracts/atlas_jury.py`
-  - Intelligent contract that evaluates uploaded evidence
-  - Returns approved or rejected verdicts plus payout guidance
+  U --> F
+  F -->|relative /api requests| R
+  F -->|wallet premium deposit| P
+  R -->|sponsored premium deposit| P
+  R -->|submit and queue claim| C
+  R -->|evaluate_claim(...)| J
+  J -->|finalized verdict| R
+  C -->|resolveAndPayClaim(...)| P
+```
 
-### Relay backend
+## Dual-Chain Model
 
-- `server/src/index.js`
-  - Exposes the Atlas API used by the frontend
-  - Provides overview data
-  - Queues sponsored card deposits in test mode
-  - Bridges Arc claim submission to GenLayer StudioNet evaluation and back to Arc payout resolution
-- `server/src/store.js`
-  - In-memory store for deposits and claim activity during local development
+### Arc Testnet: money layer
 
-## Networks
+Arc is responsible for settlement and fund custody:
 
-### Arc Testnet
+- premium deposits
+- community reserve accounting
+- treasury fee collection
+- claim registration
+- payout execution in USDC
 
-- Chain ID: `5042002`
-- RPC: `https://rpc.testnet.arc.network`
-- Explorer: `https://testnet.arcscan.app`
-- Testnet USDC: `0x3600000000000000000000000000000000000000`
+### GenLayer StudioNet: intelligence layer
 
-### GenLayer StudioNet
+GenLayer is responsible for verdict generation:
 
-- Chain ID: `61999`
-- RPC: `https://studio.genlayer.com/api`
-- Explorer: `https://explorer-studio.genlayer.com`
+- receiving claim evidence metadata
+- producing a verdict inside the intelligent contract
+- finalizing the result through StudioNet consensus
+- returning structured claim output for Arc resolution
 
-## Environment setup
+This split keeps financial state on Arc while moving claim reasoning into a consensus-backed intelligent contract environment.
 
-Copy `.env.example` to `.env` and fill in the values you want to use locally.
+## Verdict Engine and Consensus
 
-### Frontend variables
+Atlas's claim verdict does not originate in the browser and it is not invented by the relay.
 
-- `VITE_PRIVY_APP_ID`
-- `VITE_PRIVY_CLIENT_ID`
-- `VITE_WALLETCONNECT_PROJECT_ID`
-- `VITE_API_BASE_URL`
-  - Leave this empty for same-origin `/api` calls on Vercel.
-  - Set it to `http://localhost:8787` only if you are bypassing the Vite proxy during local development.
-- `VITE_ARC_RPC_URL`
-- `VITE_ARC_USDC_ADDRESS`
-- `VITE_ATLAS_POOL_ADDRESS`
-- `VITE_ATLAS_CLAIMS_ADDRESS`
-- `VITE_TERMS_URL`
-- `VITE_PRIVACY_URL`
+The verdict flow is implemented in [`contracts/genlayer/contracts/atlas_jury.py`](./contracts/genlayer/contracts/atlas_jury.py):
 
-### Relay variables
+- `evaluate_claim(...)` receives the claim payload
+- the contract uses `gl.nondet.exec_prompt(...)` to generate structured AI output
+- validators accept only bounded JSON output that passes the contract's validation logic
+- the result is finalized through GenLayer StudioNet consensus
+- the relay waits for finalization, reads the stored verdict back from the contract, and only then resolves the Arc claim
 
-- `ATLAS_API_PORT`
-- `ATLAS_APP_URL`
-- `ATLAS_PROTOCOL_NAME`
-- `PRIVY_APP_SECRET`
-- `PRIVY_VERIFICATION_KEY`
-- `STRIPE_SECRET_KEY`
-- `STRIPE_WEBHOOK_SECRET`
-- `STRIPE_PREMIUM_PRICE_ID`
+Important implementation note:
 
-### Arc variables
+- the current contract version uses GenLayer AI prompt execution and consensus validation
+- it does **not** currently fetch external web sources during adjudication
+- verdict quality therefore depends on the evidence payload supplied to the contract call
 
-- `ARC_RPC_URL`
-- `ARC_EXPLORER_URL`
-- `ARC_USDC_ADDRESS`
-- `ARC_DEPLOYER_PRIVATE_KEY`
-- `ARC_SPONSOR_PRIVATE_KEY`
-- `ATLAS_TREASURY_WALLET`
-- `ATLAS_PLATFORM_FEE_BPS`
-- `ATLAS_POOL_ADDRESS`
-- `ATLAS_CLAIMS_ADDRESS`
-- `ATLAS_GENLAYER_RELAYER`
+## Product Flow
 
-### GenLayer variables
+### 1. Member onboarding
 
-- `GENLAYER_RPC_URL`
-- `GENLAYER_EXPLORER_URL`
-- `GENLAYER_PRIVATE_KEY`
-- `GENLAYER_ATLAS_JURY_ADDRESS`
+Atlas uses Privy to support:
 
-## Install
+- Google sign-in
+- wallet sign-in
+- embedded wallet creation for members who do not already have a wallet
 
-Install dependencies in the root project and each workspace:
+### 2. Coverage activation
+
+Members can activate coverage in two ways:
+
+- direct wallet deposit on Arc
+- card-triggered sponsored deposit when Stripe is configured
+
+Premiums are routed into `AtlasPool.sol`, where the contract atomically splits each payment between:
+
+- the community pool
+- the Atlas treasury wallet
+
+The split is controlled by `feeBps`, so the treasury percentage is configurable rather than hardcoded.
+
+### 3. Claim filing
+
+When a member files a claim:
+
+1. the relay verifies coverage status
+2. the claim is submitted to `AtlasClaims.sol`
+3. the claim is queued for GenLayer review
+4. the evidence payload is sent to `AtlasJury.evaluate_claim(...)`
+5. the finalized verdict is read back from GenLayer
+6. the relay resolves the Arc claim and triggers payout when approved
+
+### 4. Live frontend state
+
+The frontend reads:
+
+- live pool balances
+- live coverage status
+- real claim history where available
+- honest empty or read-only states when live data is unavailable
+
+Atlas intentionally avoids demo balances and fabricated member activity in live behavior.
+
+## Tech Stack
+
+| Layer | Technology | Responsibility |
+| --- | --- | --- |
+| Frontend | React 19, Vite, React Router, Framer Motion, Recharts | consumer UI, wallet UX, dashboards, claim flow |
+| Authentication | Privy | Google sign-in, wallet login, embedded wallets |
+| API / relay | Node.js, Express, Zod | overview API, deposit orchestration, Arc/GenLayer bridging |
+| Arc integration | viem | contract reads, transaction submission, deposit verification |
+| Payments | Stripe | optional card checkout flow |
+| Arc contracts | Solidity, Hardhat | pooled reserves, fee splitting, claim registry, payout execution |
+| GenLayer contract | Python intelligent contract, `genlayer-js` | consensus-backed AI verdict generation |
+| Deployment | Vercel | static frontend + serverless API functions |
+
+## Repository Layout
+
+```text
+.
+|-- api/                        # Vercel serverless entrypoints
+|-- contracts/
+|   |-- arc/                    # Arc smart contracts, tests, deploy scripts
+|   `-- genlayer/               # GenLayer intelligent contract and deploy script
+|-- public/                     # static assets
+|-- server/
+|   `-- src/                    # Express relay and chain integrations
+|-- shared/                     # shared ABIs and network constants
+|-- src/
+|   |-- boot/                   # app bootstrap and fallback boot logic
+|   `-- lib/                    # app state, wallet, API, and network helpers
+|-- vercel.json                 # Vercel build and routing config
+`-- README.md
+```
+
+## Local Setup
+
+### Prerequisites
+
+- Node.js 20 or newer
+- npm
+- Arc Testnet and GenLayer StudioNet credentials if you want full live interaction
+
+### Install dependencies
 
 ```bash
 npm install
@@ -131,9 +193,80 @@ npm --prefix contracts/arc install
 npm --prefix contracts/genlayer install
 ```
 
-## Run locally
+### Create your environment file
 
-### Frontend + relay
+Copy `.env.example` to `.env` and fill in the values you need locally.
+
+```bash
+cp .env.example .env
+```
+
+Important:
+
+- `.env` is intentionally ignored by Git
+- never commit private keys, Privy secrets, or Stripe secrets
+
+## Environment Variables
+
+### Frontend and auth
+
+| Variable | Required | Purpose |
+| --- | --- | --- |
+| `VITE_PRIVY_APP_ID` | for sign-in | Privy application ID |
+| `VITE_PRIVY_CLIENT_ID` | recommended | Privy client ID |
+| `VITE_WALLETCONNECT_PROJECT_ID` | for external wallets | WalletConnect project ID |
+| `VITE_ARC_RPC_URL` | optional | Arc RPC override for the frontend |
+| `VITE_ARC_USDC_ADDRESS` | yes | Arc Testnet USDC address |
+| `VITE_ATLAS_POOL_ADDRESS` | yes | deployed `AtlasPool` contract |
+| `VITE_ATLAS_CLAIMS_ADDRESS` | yes | deployed `AtlasClaims` contract |
+| `VITE_TERMS_URL` | optional | terms URL shown in Privy |
+| `VITE_PRIVACY_URL` | optional | privacy URL shown in Privy |
+
+### Relay and app
+
+| Variable | Required | Purpose |
+| --- | --- | --- |
+| `ATLAS_API_PORT` | local only | relay port, defaults to `8787` |
+| `ATLAS_APP_URL` | yes | frontend origin used for redirects |
+| `ATLAS_PROTOCOL_NAME` | optional | protocol name passed into the GenLayer contract |
+| `PRIVY_APP_SECRET` | for authenticated Privy features | Privy backend secret |
+| `PRIVY_VERIFICATION_KEY` | optional | JWT verification key |
+
+### Arc settlement
+
+| Variable | Required | Purpose |
+| --- | --- | --- |
+| `ARC_RPC_URL` | yes | Arc RPC used by the relay |
+| `ARC_EXPLORER_URL` | optional | Arc explorer base URL |
+| `ARC_USDC_ADDRESS` | yes | USDC token address on Arc Testnet |
+| `ARC_DEPLOYER_PRIVATE_KEY` | deploys / fallback sponsor | Arc deployer key |
+| `ARC_SPONSOR_PRIVATE_KEY` | for sponsored deposits | sponsor wallet key |
+| `ATLAS_TREASURY_WALLET` | yes for deploy | treasury destination for protocol fees |
+| `ATLAS_PLATFORM_FEE_BPS` | optional | basis-point fee split for treasury |
+| `ATLAS_POOL_ADDRESS` | yes | deployed Arc pool contract |
+| `ATLAS_CLAIMS_ADDRESS` | yes | deployed Arc claims contract |
+| `ATLAS_GENLAYER_RELAYER` | optional | relayer address tracked in deployment flow |
+
+### GenLayer
+
+| Variable | Required | Purpose |
+| --- | --- | --- |
+| `GENLAYER_RPC_URL` | yes | StudioNet endpoint |
+| `GENLAYER_EXPLORER_URL` | optional | StudioNet explorer base URL |
+| `GENLAYER_PRIVATE_KEY` | for deploy / writes | account used to deploy or call the jury contract |
+| `GENLAYER_ATLAS_JURY_ADDRESS` | recommended | deployed `AtlasJury` contract address |
+
+### Stripe
+
+| Variable | Required | Purpose |
+| --- | --- | --- |
+| `STRIPE_SECRET_KEY` | optional | Stripe API secret |
+| `STRIPE_WEBHOOK_SECRET` | optional | webhook signing secret |
+| `STRIPE_PREMIUM_PRICE_ID` | optional | Stripe recurring price ID |
+
+## Running Atlas Locally
+
+### Full stack
 
 ```bash
 npm run dev:full
@@ -141,59 +274,10 @@ npm run dev:full
 
 This starts:
 
-- Vite on `http://localhost:5173`
-- The Atlas relay on `http://localhost:8787`
+- the Vite frontend at `http://localhost:5173`
+- the Atlas relay at `http://localhost:8787`
 
-The Vite dev server proxies `/api/*` requests to the local relay automatically, so the frontend can use the same relative API paths locally and on Vercel.
-
-## Deploy to Vercel
-
-Atlas is configured to deploy as:
-
-- a static Vite frontend from `dist/`
-- Vercel Functions for the Express relay under `/api/*`
-
-The checked-in `vercel.json` sets:
-
-- `buildCommand` to `npm run build`
-- `installCommand` to install both root and relay dependencies
-- SPA rewrites for non-API routes
-- a `300` second max duration for API functions
-
-Before deploying, add the production environment variables in Vercel for any live integrations you want enabled:
-
-- `VITE_PRIVY_APP_ID`
-- `VITE_PRIVY_CLIENT_ID`
-- `VITE_WALLETCONNECT_PROJECT_ID`
-- `VITE_ARC_RPC_URL`
-- `VITE_ARC_USDC_ADDRESS`
-- `VITE_ATLAS_POOL_ADDRESS`
-- `VITE_ATLAS_CLAIMS_ADDRESS`
-- `ATLAS_APP_URL`
-- `ATLAS_TREASURY_WALLET`
-- `ATLAS_PLATFORM_FEE_BPS`
-- `ATLAS_POOL_ADDRESS`
-- `ATLAS_CLAIMS_ADDRESS`
-- `ARC_RPC_URL`
-- `ARC_EXPLORER_URL`
-- `ARC_USDC_ADDRESS`
-- `ARC_DEPLOYER_PRIVATE_KEY`
-- `ARC_SPONSOR_PRIVATE_KEY`
-- `GENLAYER_RPC_URL`
-- `GENLAYER_EXPLORER_URL`
-- `GENLAYER_ATLAS_JURY_ADDRESS`
-- `GENLAYER_PRIVATE_KEY`
-- `PRIVY_APP_SECRET`
-- `PRIVY_VERIFICATION_KEY`
-- `STRIPE_SECRET_KEY`
-- `STRIPE_WEBHOOK_SECRET`
-- `STRIPE_PREMIUM_PRICE_ID`
-
-### Relay only
-
-```bash
-npm run server:start
-```
+The Vite dev server proxies `/api/*` to the local relay, so Atlas uses the same relative API paths locally and on Vercel.
 
 ### Frontend only
 
@@ -201,85 +285,115 @@ npm run server:start
 npm run dev
 ```
 
-## Arc contract workflow
+### Relay only
 
-### Compile
+```bash
+npm run server:start
+```
+
+### Read-only fallback behavior
+
+If `VITE_PRIVY_APP_ID` is missing, or Privy fails during boot, Atlas automatically falls back to a read-only mode. This allows the app to render safely without fake balances while still showing available live backend data.
+
+## Smart Contract Workflows
+
+### Arc contracts
+
+Compile:
 
 ```bash
 npm run contracts:arc:compile
 ```
 
-### Test
+Test:
 
 ```bash
 npm run contracts:arc:test
 ```
 
-### Deploy to Arc Testnet
-
-Make sure `ATLAS_TREASURY_WALLET`, `ARC_DEPLOYER_PRIVATE_KEY`, and the USDC settings are present in `.env`, then run:
+Deploy to Arc Testnet:
 
 ```bash
 npm --prefix contracts/arc run deploy:testnet
 ```
 
-The deploy script prints the deployed `AtlasPool` and `AtlasClaims` addresses so they can be copied back into `.env`.
+After deployment, copy the resulting `AtlasPool` and `AtlasClaims` addresses back into `.env`.
 
-## GenLayer StudioNet workflow
+### GenLayer contract
 
-The relay can deploy `atlas_jury.py` automatically when `GENLAYER_PRIVATE_KEY` is configured but `GENLAYER_ATLAS_JURY_ADDRESS` is empty.
-
-You can also use the GenLayer workspace directly:
+Manual deploy to StudioNet:
 
 ```bash
 npm --prefix contracts/genlayer run deploy:studionet
 ```
 
-If you predeploy the StudioNet jury contract, put the returned address into `GENLAYER_ATLAS_JURY_ADDRESS`.
+Current relay behavior:
 
-## Deposit and claim flows
+- if `GENLAYER_ATLAS_JURY_ADDRESS` is set, the relay uses that existing contract
+- if the address is empty but `GENLAYER_PRIVATE_KEY` is present, the relay can deploy `atlas_jury.py` automatically on first use
 
-### Sponsored card deposit
+## Core API Surface
 
-- The relay treats card checkout as a Stripe test-mode flow.
-- On success, it attempts a sponsored USDC deposit into `AtlasPool` on Arc Testnet.
-- The smart contract performs the 90/10 split atomically:
-  - 90% stays in the community pool
-  - 10% moves to the Atlas treasury wallet
+| Endpoint | Method | Purpose |
+| --- | --- | --- |
+| `/api/health` | `GET` | health and RPC visibility check |
+| `/api/config` | `GET` | frontend configuration for Arc and GenLayer |
+| `/api/overview` | `GET` | live pool, coverage, and member overview |
+| `/api/deposits/wallet` | `POST` | verify and register a wallet premium deposit |
+| `/api/deposits/card` | `POST` | create a card deposit session |
+| `/api/deposits/card/:depositId/confirm` | `POST` | confirm Stripe payment and sponsor Arc deposit |
+| `/api/claims` | `POST` | file a claim and start verdict flow |
+| `/api/claims/:claimId` | `GET` | fetch stored claim status |
 
-### Direct wallet deposit
+## Deployment
 
-- The frontend can approve testnet USDC and call `depositPremium` directly from the member wallet.
+Atlas is configured for Vercel as:
 
-### Claim evaluation
+- a static Vite frontend built into `dist/`
+- serverless API functions under `/api/*`
 
-1. The relay submits the claim to `AtlasClaims` on Arc.
-2. The claim is queued for StudioNet review.
-3. The relay calls the GenLayer jury contract with the evidence payload.
-4. The jury returns an approved or rejected verdict and payout suggestion.
-5. The relay resolves the claim on Arc and triggers payout from `AtlasPool` when approved.
+Relevant deployment behavior:
 
-## Verification status
+- `vercel.json` sets `buildCommand` to `npm run build`
+- `installCommand` installs root and relay dependencies
+- non-API routes are rewritten to `index.html`
+- API functions are allowed up to `300` seconds
 
-The current scaffold has already been verified with:
+### Production checklist
 
-- `npm run lint`
-- `npm run build`
-- `npm run contracts:arc:compile`
-- `npm run contracts:arc:test`
+1. Add the required frontend, Arc, GenLayer, Privy, and optional Stripe variables in Vercel.
+2. Confirm `VITE_ATLAS_POOL_ADDRESS`, `VITE_ATLAS_CLAIMS_ADDRESS`, and `GENLAYER_ATLAS_JURY_ADDRESS` point to the intended deployed contracts.
+3. Redeploy after any frontend, relay, or environment change.
 
-## Current prototype limits
+Because Atlas uses relative `/api` requests, the same frontend build works locally and in production without hardcoding `localhost`.
 
-- The relay store is in-memory, so deposits and claims reset when the relay restarts.
-- Stripe is still represented as a test-mode placeholder flow rather than a production webhook pipeline.
-- The Privy, Arc, and GenLayer flows are ready for testnet credentials, but they need real project keys and deployed addresses in `.env`.
-- The GenLayer-to-Arc bridge is currently implemented through the relay rather than a fully trust-minimized cross-chain mechanism.
+## Verification
 
-## North star
+The current project has been verified with:
 
-Atlas should feel like a normal consumer insurance product while invisibly using two chains under the hood:
+```bash
+npm run lint
+npm run build
+npm run contracts:arc:compile
+npm run contracts:arc:test
+```
+
+## Current Prototype Boundaries
+
+Atlas is intentionally honest about what is live today and what is still prototype-grade:
+
+- Arc integration is testnet-only
+- GenLayer verdicts are finalized inside the intelligent contract, but the current contract does not perform external web retrieval
+- card checkout depends on Stripe configuration and is otherwise treated as a test-mode flow
+- local relay persistence uses a JSON store for development and is not durable serverless storage
+- cross-chain coordination is relay-orchestrated, not yet a fully trust-minimized bridge
+- when live data is missing, Atlas shows empty or read-only states instead of demo balances
+
+## Project Thesis
+
+Atlas is built around a simple split:
 
 - Arc is the bank
-- GenLayer StudioNet is the courtroom
+- GenLayer is the courtroom
 
-The product experience stays simple for the member, while the protocol logic stays fully aligned with the decentralized insurance model.
+The user experience stays familiar, while the protocol logic becomes transparent, programmable, and auditable across both settlement and adjudication.

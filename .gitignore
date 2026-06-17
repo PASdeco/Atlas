@@ -34,5 +34,3 @@ contracts/**/cache
 *.njsproj
 *.sln
 *.sw?
-
-.vercel

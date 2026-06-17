@@ -15,7 +15,8 @@ export const privyConfig = {
     walletChainType: 'ethereum-only',
   },
   loginMethods: ['google', 'wallet'],
-  walletConnectCloudProjectId: import.meta.env.VITE_WALLETCONNECT_PROJECT_ID,
+  walletConnectCloudProjectId:
+    import.meta.env.VITE_WALLETCONNECT_PROJECT_ID?.trim() || undefined,
   supportedChains: [privyArcChain],
   defaultChain: privyArcChain,
   embeddedWallets: {

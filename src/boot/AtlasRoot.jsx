@@ -8,7 +8,7 @@ const privyAppId = import.meta.env.VITE_PRIVY_APP_ID?.trim() || ''
 const privyClientId = import.meta.env.VITE_PRIVY_CLIENT_ID?.trim() || ''
 const hasPrivyAppId = Boolean(privyAppId)
 const missingPrivyMessage =
-  'Privy is not configured for local development yet. Atlas loaded in demo mode instead.'
+  'Privy is not configured yet. Atlas loaded in read-only mode.'
 
 export function AtlasRoot() {
   if (!hasPrivyAppId) {
@@ -23,7 +23,7 @@ export function AtlasRoot() {
     <BootErrorBoundary
       fallback={(error) => (
         <AtlasDemoAppProvider
-          initialStatusMessage="Atlas recovered into demo mode after a startup auth error."
+          initialStatusMessage="Atlas recovered into read-only mode after a startup auth error."
           initialError={error?.message || 'Atlas could not initialize Privy with the current config.'}
         >
           <App />

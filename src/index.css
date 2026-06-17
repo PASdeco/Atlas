@@ -1367,6 +1367,28 @@ p {
   color: #f4fbf4;
 }
 
+.empty-panel-state {
+  display: flex;
+  flex-direction: column;
+  justify-content: center;
+  gap: 10px;
+  min-height: 220px;
+  padding: 22px;
+  border-radius: 24px;
+  background:
+    radial-gradient(circle at top right, rgba(195, 234, 141, 0.24), transparent 36%),
+    rgba(22, 60, 61, 0.05);
+}
+
+.empty-panel-state strong {
+  font-size: 1.05rem;
+}
+
+.empty-panel-state p {
+  max-width: 42ch;
+  color: var(--text-soft);
+}
+
 .tone-good {
   color: #2a7876;
 }

@@ -8,6 +8,7 @@ import {
   assertArcContractsHealthy,
   queueClaimOnArc,
   readArcClaimsByMember,
+  readRecentArcClaims,
   readLatestPremiumDepositByMember,
   readArcOverview,
   resolveClaimOnArc,
@@ -41,7 +42,6 @@ const claimSchema = z.object({
   category: z.string().min(2),
   description: z.string().min(10),
   files: z.array(z.string()).default([]),
-  evidenceState: z.string().default('approved'),
   requestedAmount: z
     .number()
     .positive()
@@ -133,6 +133,75 @@ function buildCoverageState({ latestDeposit, fallbackPremiumUsdc = 0 }) {
   }
 }
 
+function buildRecentActivity(claims) {
+  if (!Array.isArray(claims) || claims.length === 0) {
+    return []
+  }
+
+  const now = Date.now()
+  const recentWindowMs = 7 * DAY_MS
+  const bucketOrder = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat']
+  const buckets = bucketOrder.map((day) => ({
+    day,
+    approved: 0,
+    pending: 0,
+    rejected: 0,
+  }))
+
+  for (const claim of claims) {
+    const createdAt = new Date(claim.createdAt || '').getTime()
+    if (!Number.isFinite(createdAt) || now - createdAt > recentWindowMs) {
+      continue
+    }
+
+    const bucket = buckets[new Date(createdAt).getDay()]
+    if (!bucket) {
+      continue
+    }
+
+    if (claim.approved || claim.status === 'paid' || claim.status === 'approved') {
+      bucket.approved += 1
+      continue
+    }
+
+    if (claim.status === 'rejected') {
+      bucket.rejected += 1
+      continue
+    }
+
+    bucket.pending += 1
+  }
+
+  return buckets
+}
+
+function buildPoolComposition(arcOverview) {
+  const poolSizeUsdc = formatUsdc(arcOverview.poolSnapshot?.[3] || 0n)
+  const treasuryBalanceUsdc = formatUsdc(arcOverview.poolSnapshot?.[4] || 0n)
+  const totalTracked = poolSizeUsdc + treasuryBalanceUsdc
+
+  if (totalTracked <= 0) {
+    return []
+  }
+
+  const toPercent = (value) => Number(((value / totalTracked) * 100).toFixed(1))
+
+  return [
+    {
+      name: 'Community pool',
+      value: toPercent(poolSizeUsdc),
+      amountUsdc: poolSizeUsdc,
+      color: '#c3ea8d',
+    },
+    {
+      name: 'Treasury collected',
+      value: toPercent(treasuryBalanceUsdc),
+      amountUsdc: treasuryBalanceUsdc,
+      color: '#163c3d',
+    },
+  ].filter((entry) => entry.amountUsdc > 0)
+}
+
 function assertCoverageActive(coverage) {
   if (coverage?.isCoverageActive) {
     return
@@ -206,71 +275,86 @@ app.get('/api/config', async (request, response) => {
   })
 })
 
-app.get('/api/overview', async (request, response) => {
-  const walletAddress = String(request.query.wallet || '')
-  const arcOverview = await readArcOverview(walletAddress)
-  const historicalPremiumUsdc = formatUsdc(arcOverview.memberPremium || 0n)
-  const [chainClaims, latestPremiumDeposit] = await Promise.all([
-    walletAddress ? readArcClaimsByMember(walletAddress) : Promise.resolve([]),
-    walletAddress && historicalPremiumUsdc > 0
-      ? readLatestPremiumDepositByMember(walletAddress)
-      : Promise.resolve(null),
-  ])
-  const localClaims = walletAddress ? listClaimsByWallet(walletAddress) : []
-  const claims = chainClaims.length > 0 ? chainClaims : localClaims
-  const latestCompletedDeposit =
-    latestPremiumDeposit || (walletAddress ? getLatestCompletedDepositByWallet(walletAddress) : null)
-  const coverage = buildCoverageState({
-    latestDeposit: latestCompletedDeposit,
-    fallbackPremiumUsdc: historicalPremiumUsdc,
-  })
+app.get('/api/overview', async (request, response, next) => {
+  try {
+    const walletAddress = String(request.query.wallet || '')
+    const arcOverview = await readArcOverview(walletAddress)
+    const historicalPremiumUsdc = formatUsdc(arcOverview.memberPremium || 0n)
+    const [chainClaims, globalRecentClaims, latestPremiumDeposit] = await Promise.all([
+      walletAddress ? readArcClaimsByMember(walletAddress) : Promise.resolve([]),
+      readRecentArcClaims(),
+      walletAddress && historicalPremiumUsdc > 0
+        ? readLatestPremiumDepositByMember(walletAddress)
+        : Promise.resolve(null),
+    ])
+    const localClaims = walletAddress ? listClaimsByWallet(walletAddress) : []
+    const claims = chainClaims.length > 0 ? chainClaims : localClaims
+    const latestCompletedDeposit =
+      latestPremiumDeposit || (walletAddress ? getLatestCompletedDepositByWallet(walletAddress) : null)
+    const coverage = buildCoverageState({
+      latestDeposit: latestCompletedDeposit,
+      fallbackPremiumUsdc: historicalPremiumUsdc,
+    })
 
-  response.json({
-    member: {
-      walletAddress,
-      walletDisplay: walletAddress ? `${walletAddress.slice(0, 6)}...${walletAddress.slice(-4)}` : '',
-      monthlyPremiumUsdc: coverage.monthlyPremiumUsdc,
-      renewsInDays: coverage.renewsInDays,
-      isCoverageActive: coverage.isCoverageActive,
-      canFileClaim: coverage.canFileClaim,
-      coverageActivatedAt: coverage.coverageActivatedAt,
-      coverageExpiresAt: coverage.coverageExpiresAt,
-      lastPremiumPaidAt: coverage.lastPremiumPaidAt,
-      totalPaidToYouUsdc: claims
-        .filter((claim) => claim.approved)
-        .reduce((sum, claim) => sum + Number(claim.payoutAmountUsdc || 0), 0),
-      activeClaims: claims.filter((claim) => claim.status !== 'rejected' && claim.status !== 'paid').length,
-      approvedClaims: claims.filter((claim) => claim.approved).length,
-      pendingClaims: claims.filter((claim) => !claim.approved && claim.status !== 'rejected').length,
-      payoutWallet: walletAddress || 'Embedded wallet pending',
-    },
-    pool: {
-      poolSizeUsdc: formatUsdc(arcOverview.poolSnapshot?.[3] || 0n) || 2847392,
-      claimsPaidThisMonth: 1284,
-      averagePayoutSeconds: 47,
-      activeMembers: 9431,
-      protocolFeeCollectedUsdc: formatUsdc(arcOverview.poolSnapshot?.[4] || 0n) || 184903,
-      reserveBufferUsdc: formatUsdc(arcOverview.poolSnapshot?.[3] || 0n) || 1590000,
-      reserveCoverageRatio: 182,
-      treasuryBalanceUsdc: formatUsdc(arcOverview.poolSnapshot?.[4] || 0n),
-    },
-    signal: {
-      evidenceConfidence: 92,
-      fraudAlerts: 3,
-      averageDeliberationSeconds: 47,
-    },
-    recentClaims: claims.slice(0, 6).map((claim) => ({
-      id: claim.id,
-      type: `${claim.category} claim`,
-      amount: `$${Number(claim.payoutAmountUsdc || claim.requestedAmount || 0).toFixed(0)}`,
-      date: new Date(claim.createdAt).toLocaleDateString('en-US', {
-        month: 'short',
-        day: 'numeric',
-      }),
-      status: humanizeClaimStatus(claim),
-      reason: claim.reason,
-    })),
-  })
+    response.json({
+      member: {
+        walletAddress,
+        walletDisplay: walletAddress ? `${walletAddress.slice(0, 6)}...${walletAddress.slice(-4)}` : '',
+        monthlyPremiumUsdc: coverage.monthlyPremiumUsdc,
+        renewsInDays: coverage.renewsInDays,
+        isCoverageActive: coverage.isCoverageActive,
+        canFileClaim: coverage.canFileClaim,
+        coverageActivatedAt: coverage.coverageActivatedAt,
+        coverageExpiresAt: coverage.coverageExpiresAt,
+        lastPremiumPaidAt: coverage.lastPremiumPaidAt,
+        totalPaidToYouUsdc: claims
+          .filter((claim) => claim.approved)
+          .reduce((sum, claim) => sum + Number(claim.payoutAmountUsdc || 0), 0),
+        activeClaims: claims.filter((claim) => claim.status !== 'rejected' && claim.status !== 'paid').length,
+        approvedClaims: claims.filter((claim) => claim.approved).length,
+        pendingClaims: claims.filter((claim) => !claim.approved && claim.status !== 'rejected').length,
+        payoutWallet: walletAddress || 'Embedded wallet pending',
+      },
+      pool: {
+        poolSizeUsdc: formatUsdc(arcOverview.poolSnapshot?.[3] || 0n),
+        claimsPaid: globalRecentClaims.filter((claim) => claim.approved).length,
+        activeMembers: 0,
+        protocolFeeCollectedUsdc: formatUsdc(arcOverview.poolSnapshot?.[4] || 0n),
+        reserveBufferUsdc: formatUsdc(arcOverview.poolSnapshot?.[3] || 0n),
+        reserveCoverageRatio:
+          globalRecentClaims.filter((claim) => claim.status !== 'rejected').length > 0
+            ? Number(
+                (
+                  (formatUsdc(arcOverview.poolSnapshot?.[3] || 0n) /
+                    Math.max(
+                      1,
+                      globalRecentClaims
+                        .filter((claim) => claim.status !== 'rejected')
+                        .reduce((sum, claim) => sum + Number(claim.requestedAmountUsdc || 0), 0),
+                    )) *
+                  100
+                ).toFixed(0),
+              )
+            : 0,
+        treasuryBalanceUsdc: formatUsdc(arcOverview.poolSnapshot?.[4] || 0n),
+      },
+      recentClaims: claims.slice(0, 6).map((claim) => ({
+        id: claim.id,
+        type: `${claim.category} claim`,
+        amount: `$${Number(claim.payoutAmountUsdc || claim.requestedAmount || 0).toFixed(0)}`,
+        date: new Date(claim.createdAt).toLocaleDateString('en-US', {
+          month: 'short',
+          day: 'numeric',
+        }),
+        status: humanizeClaimStatus(claim),
+        reason: claim.reason,
+      })),
+      recentActivity: buildRecentActivity(globalRecentClaims),
+      poolComposition: buildPoolComposition(arcOverview),
+    })
+  } catch (error) {
+    next(error)
+  }
 })
 
 app.post('/api/deposits/wallet', async (request, response) => {
@@ -464,7 +548,6 @@ app.post('/api/claims', async (request, response) => {
   const evidenceUri = `atlas://evidence/${externalReference}`
   const evidenceManifest = JSON.stringify({
     files: payload.files,
-    evidenceState: payload.evidenceState,
   })
 
   const claimRecord = createClaimRecord({
@@ -472,7 +555,6 @@ app.post('/api/claims', async (request, response) => {
     category: payload.category,
     description: payload.description,
     files: payload.files,
-    evidenceState: payload.evidenceState,
     requestedAmount: payload.requestedAmount,
     requestedAmountUsdc: payload.requestedAmount,
     payoutAmountUsdc: 0,

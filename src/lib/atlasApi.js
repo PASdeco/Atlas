@@ -1,7 +1,5 @@
-const DEFAULT_API_BASE_URL = ''
-
-export const atlasApiBaseUrl =
-  import.meta.env.VITE_API_BASE_URL?.trim().replace(/\/$/, '') || DEFAULT_API_BASE_URL
+// Atlas runs behind the same origin both on Vercel and through the local Vite proxy.
+export const atlasApiBaseUrl = ''
 
 function wait(ms) {
   return new Promise((resolve) => window.setTimeout(resolve, ms))
@@ -45,10 +43,15 @@ async function atlasRequest(path, { method = 'GET', accessToken, headers, body }
     : await response.text()
 
   if (!response.ok) {
-    const message =
+    let message =
       typeof payload === 'string'
         ? payload
         : payload?.error || payload?.message || 'Atlas request failed.'
+
+    if (typeof message === 'string' && /<!doctype html>|<html|<body|<pre>/i.test(message)) {
+      message = 'Atlas could not refresh live chain data right now. Please retry in a moment.'
+    }
+
     throw new Error(message)
   }
 

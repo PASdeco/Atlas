@@ -5,7 +5,7 @@ import {
   useMemo,
   useState,
 } from 'react'
-import { useCreateWallet, usePrivy, useToken, useWallets } from '@privy-io/react-auth'
+import { usePrivy, useToken, useWallets } from '@privy-io/react-auth'
 import { useExportWallet } from '@privy-io/react-auth'
 import {
   confirmCardDepositSession,
@@ -22,12 +22,6 @@ import { ARC_TESTNET_USDC_ADDRESS } from '../../shared/atlasNetworks'
 import { AtlasAppContext } from './atlasAppContextBase.js'
 
 const pendingStatuses = new Set(['submitted', 'queued', 'deliberating', 'pending'])
-const demoClaimMoneyFormatter = new Intl.NumberFormat('en-US', {
-  style: 'currency',
-  currency: 'USD',
-  minimumFractionDigits: 2,
-  maximumFractionDigits: 2,
-})
 
 function wait(ms) {
   return new Promise((resolve) => window.setTimeout(resolve, ms))
@@ -79,21 +73,8 @@ function inferDisplayName(user, walletAddress) {
   return 'Guest member'
 }
 
-function buildDemoClaim(id, overrides = {}) {
+function buildEmptyOverview(walletAddress = '') {
   return {
-    id,
-    type: 'Airport baggage delay',
-    amount: '$120',
-    date: 'Today',
-    status: 'Approved',
-    reason: 'Evidence confirmed by the AI jury.',
-    ...overrides,
-  }
-}
-
-function buildDemoOverview(walletAddress = '') {
-  return {
-    mode: 'demo',
     network: {
       arc: 'Arc Testnet',
       genlayer: 'GenLayer StudioNet',
@@ -109,45 +90,24 @@ function buildDemoOverview(walletAddress = '') {
       coverageActivatedAt: '',
       coverageExpiresAt: '',
       lastPremiumPaidAt: '',
-      totalPaidToYouUsdc: 1650,
-      activeClaims: 2,
-      approvedClaims: 1,
-      pendingClaims: 1,
+      totalPaidToYouUsdc: 0,
+      activeClaims: 0,
+      approvedClaims: 0,
+      pendingClaims: 0,
       payoutWallet: walletAddress || 'Embedded wallet pending',
-      memberSince: 'June 2026',
     },
     pool: {
-      poolSizeUsdc: 2847392,
-      claimsPaidThisMonth: 1284,
-      averagePayoutSeconds: 47,
-      activeMembers: 9431,
-      protocolFeeCollectedUsdc: 184903,
-      reserveBufferUsdc: 1590000,
-      reserveCoverageRatio: 182,
-      treasuryBalanceUsdc: 205400,
+      poolSizeUsdc: 0,
+      claimsPaid: 0,
+      activeMembers: 0,
+      protocolFeeCollectedUsdc: 0,
+      reserveBufferUsdc: 0,
+      reserveCoverageRatio: 0,
+      treasuryBalanceUsdc: 0,
     },
-    signal: {
-      evidenceConfidence: 92,
-      fraudAlerts: 3,
-      averageDeliberationSeconds: 47,
-    },
-    recentClaims: [
-      buildDemoClaim('demo-1'),
-      buildDemoClaim('demo-2', {
-        type: 'Auto glass replacement',
-        amount: '$365',
-        date: 'Yesterday',
-        status: 'Pending',
-        reason: 'Waiting for the AI jury to reconcile repair estimates.',
-      }),
-      buildDemoClaim('demo-3', {
-        type: 'Concert cancellation',
-        amount: '$95',
-        date: '2 days ago',
-        status: 'Rejected',
-        reason: 'The evidence set could not verify event cancellation.',
-      }),
-    ],
+    recentClaims: [],
+    recentActivity: [],
+    poolComposition: [],
   }
 }
 
@@ -168,13 +128,17 @@ function mergeOverview(base, incoming) {
       ...(incoming.pool || {}),
     },
     signal: {
-      ...base.signal,
+      ...(base.signal || {}),
       ...(incoming.signal || {}),
     },
     recentClaims:
-      Array.isArray(incoming.recentClaims) && incoming.recentClaims.length > 0
+      Array.isArray(incoming.recentClaims)
         ? incoming.recentClaims
         : base.recentClaims,
+    recentActivity:
+      Array.isArray(incoming.recentActivity) ? incoming.recentActivity : base.recentActivity,
+    poolComposition:
+      Array.isArray(incoming.poolComposition) ? incoming.poolComposition : base.poolComposition,
   }
 }
 
@@ -184,22 +148,22 @@ export function AtlasDemoAppProvider({
   initialError = '',
 }) {
   const [atlasConfig, setAtlasConfig] = useState(null)
-  const [overview, setOverview] = useState(() => buildDemoOverview(''))
+  const [overview, setOverview] = useState(() => buildEmptyOverview(''))
   const [busyAction, setBusyAction] = useState('')
   const [statusMessage, setStatusMessage] = useState(
     initialStatusMessage ||
-      'Atlas is running in local demo mode. Add your Privy credentials to enable live auth.',
+      'Privy is not configured yet. Atlas is read-only until live credentials are added.',
   )
   const [lastError, setLastError] = useState(initialError)
 
   const loadOverview = useCallback(async () => {
-    const demo = buildDemoOverview('')
+    const empty = buildEmptyOverview('')
 
     try {
       const payload = await getAtlasOverview({ walletAddress: '', accessToken: null })
-      return mergeOverview(demo, payload)
+      return mergeOverview(empty, payload)
     } catch {
-      return demo
+      return empty
     }
   }, [])
 
@@ -251,7 +215,7 @@ export function AtlasDemoAppProvider({
   const login = useCallback(() => {
     setLastError(initialError)
     setStatusMessage(
-      'Local demo mode is active. Create a `.env` from `.env.example` and add your Privy keys to enable sign-in.',
+      'Add your Privy keys to enable sign-in and live Atlas transactions.',
     )
   }, [initialError])
 
@@ -266,10 +230,10 @@ export function AtlasDemoAppProvider({
   const logout = useCallback(async () => {
     setLastError(initialError)
     startTransition(() => {
-      setOverview(buildDemoOverview(''))
+      setOverview(buildEmptyOverview(''))
       setStatusMessage(
         initialStatusMessage ||
-          'Atlas is still running in local demo mode while live auth is disabled.',
+          'Atlas is read-only while live auth is disabled.',
       )
     })
   }, [initialError, initialStatusMessage])
@@ -279,11 +243,8 @@ export function AtlasDemoAppProvider({
     setLastError(initialError)
 
     try {
-      await wait(450)
-      setStatusMessage(
-        `Demo mode only. Add Privy and Stripe test keys to enable ${plan.title} card deposits.`,
-      )
-      return null
+      await wait(150)
+      throw new Error(`Add Privy and Stripe config to enable live ${plan.title} card deposits.`)
     } finally {
       setBusyAction('')
     }
@@ -294,12 +255,8 @@ export function AtlasDemoAppProvider({
     setLastError(initialError)
 
     try {
-      await wait(350)
-      setStatusMessage(`Demo mode confirmed deposit ${depositId}. Configure Stripe and Arc for live card settlement.`)
-      return {
-        ok: true,
-        deposit: { id: Number(depositId), status: 'completed' },
-      }
+      await wait(150)
+      throw new Error(`Stripe confirmation is unavailable until live Atlas payment config is added for deposit ${depositId}.`)
     } finally {
       setBusyAction('')
     }
@@ -310,60 +267,20 @@ export function AtlasDemoAppProvider({
     setLastError(initialError)
 
     try {
-      await wait(450)
-      setStatusMessage(
-        `Demo mode only. Add Privy plus Arc wallet config to enable ${plan.title} wallet deposits.`,
-      )
-      return null
+      await wait(150)
+      throw new Error(`Add Privy and Arc wallet config to enable live ${plan.title} wallet deposits.`)
     } finally {
       setBusyAction('')
     }
   }, [initialError])
 
-  const submitClaim = useCallback(async (claim) => {
+  const submitClaim = useCallback(async () => {
     setBusyAction('claim')
     setLastError(initialError)
 
     try {
-      await wait(1200)
-
-      const requestedAmount = Number(claim.requestedAmount || 0)
-      const approved = claim.evidenceState !== 'reviewed'
-      const payoutAmountUsdc = approved ? requestedAmount : 0
-      const claimId = `demo-${Date.now()}`
-      const result = {
-        id: claimId,
-        status: approved ? 'approved' : 'reviewed',
-        approved,
-        payoutAmountUsdc,
-        reason: approved
-          ? 'Demo mode approved this sample claim. Configure Privy, Arc, and GenLayer for live verdicts.'
-          : 'Demo mode flagged this sample claim for more evidence before payout.',
-      }
-
-      startTransition(() => {
-        setOverview((current) => ({
-          ...current,
-          recentClaims: [
-            buildDemoClaim(claimId, {
-              type: `${claim.category} incident`,
-              amount: demoClaimMoneyFormatter.format(requestedAmount || 0),
-              date: 'Today',
-              status: approved ? 'Approved' : 'Reviewed',
-              reason: result.reason,
-            }),
-            ...(Array.isArray(current.recentClaims) ? current.recentClaims.slice(0, 2) : []),
-          ],
-        }))
-      })
-
-      setStatusMessage(
-        approved
-          ? 'Demo verdict complete. Configure Privy and the live networks to queue real Arc payouts.'
-          : 'Demo verdict complete. Atlas would request more evidence in live mode.',
-      )
-
-      return result
+      await wait(150)
+      throw new Error('Live claim submission is unavailable until Privy, Arc, and GenLayer are configured.')
     } finally {
       setBusyAction('')
     }
@@ -414,13 +331,12 @@ export function AtlasDemoAppProvider({
 
 export function AtlasAppProvider({ children }) {
   const privy = usePrivy()
-  const { wallets, ready: walletsReady } = useWallets()
+  const { wallets } = useWallets()
   const { getAccessToken } = useToken()
-  const { createWallet } = useCreateWallet()
   const { exportWallet } = useExportWallet()
 
   const [atlasConfig, setAtlasConfig] = useState(null)
-  const [overview, setOverview] = useState(() => buildDemoOverview(''))
+  const [overview, setOverview] = useState(() => buildEmptyOverview(''))
   const [busyAction, setBusyAction] = useState('')
   const [statusMessage, setStatusMessage] = useState('')
   const [lastError, setLastError] = useState('')
@@ -445,18 +361,18 @@ export function AtlasAppProvider({ children }) {
   }, [getAccessToken])
 
   const loadOverview = useCallback(async () => {
-    const demo = buildDemoOverview(walletAddress)
+    const empty = buildEmptyOverview(walletAddress)
 
     try {
       const accessToken = await readAccessToken()
       const payload = await getAtlasOverview({ walletAddress, accessToken })
       return {
-        nextOverview: mergeOverview(demo, payload),
+        nextOverview: mergeOverview(empty, payload),
         errorMessage: '',
       }
     } catch (error) {
       return {
-        nextOverview: demo,
+        nextOverview: empty,
         errorMessage: error.message,
       }
     }
@@ -517,16 +433,6 @@ export function AtlasAppProvider({ children }) {
   }, [loadOverview, privy.authenticated, privy.ready, walletAddress])
 
   useEffect(() => {
-    if (!authenticated || !walletsReady || wallets.length > 0) {
-      return
-    }
-
-    createWallet().catch(() => {
-      // If the auto-creation modal was dismissed, the user can retry manually.
-    })
-  }, [authenticated, createWallet, wallets.length, walletsReady])
-
-  useEffect(() => {
     if (!authenticated || !activeWallet) {
       return
     }
@@ -566,7 +472,7 @@ export function AtlasAppProvider({ children }) {
     setStatusMessage('')
     await privy.logout()
     startTransition(() => {
-      setOverview(buildDemoOverview(''))
+      setOverview(buildEmptyOverview(''))
     })
   }, [privy])
 
@@ -752,13 +658,13 @@ export function AtlasAppProvider({ children }) {
       atlasConfig,
       authenticated,
       busyAction,
-      lastError,
+      lastError: lastError || privy.error?.message || '',
       login,
       loginWithGoogle,
       loginWithWallet,
       logout,
       memberLabel,
-      overview: mergeOverview(buildDemoOverview(walletAddress), {
+      overview: mergeOverview(buildEmptyOverview(walletAddress), {
         ...overview,
         member: {
           ...overview.member,
@@ -784,6 +690,7 @@ export function AtlasAppProvider({ children }) {
       authenticated,
       busyAction,
       lastError,
+      privy.error?.message,
       memberLabel,
       overview,
       login,

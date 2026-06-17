@@ -11,7 +11,7 @@ export class BootErrorBoundary extends Component {
   }
 
   componentDidCatch(error) {
-    console.error('Atlas startup failed. Falling back to demo mode.', error)
+    console.error('Atlas startup failed. Falling back to read-only mode.', error)
   }
 
   render() {

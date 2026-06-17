@@ -139,7 +139,18 @@ export async function readArcOverview(walletAddress) {
 }
 
 export async function readArcClaimsByMember(walletAddress) {
-  if (!walletAddress || !atlasContracts.claims.address) {
+  if (!walletAddress) {
+    return []
+  }
+
+  const claims = await readRecentArcClaims()
+  return claims.filter(
+    (claim) => normalizeAddress(claim.walletAddress) === normalizeAddress(walletAddress),
+  )
+}
+
+export async function readRecentArcClaims(limit = CLAIM_SCAN_LIMIT) {
+  if (!atlasContracts.claims.address) {
     return []
   }
 
@@ -154,7 +165,7 @@ export async function readArcClaimsByMember(walletAddress) {
     return []
   }
 
-  const firstClaimId = Math.max(1, highestClaimId - CLAIM_SCAN_LIMIT + 1)
+  const firstClaimId = Math.max(1, highestClaimId - Number(limit) + 1)
   const claimIds = []
 
   for (let claimId = highestClaimId; claimId >= firstClaimId; claimId -= 1) {
@@ -183,10 +194,6 @@ export async function readArcClaimsByMember(walletAddress) {
         externalReference,
         juryReference,
       ] = claimTuple
-
-      if (normalizeAddress(member) !== normalizeAddress(walletAddress)) {
-        return null
-      }
 
       const statusDetails = getClaimStatusDetails(status)
 
