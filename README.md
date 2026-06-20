@@ -30,33 +30,6 @@ Traditional claims systems are slow, opaque, and operationally expensive. Atlas 
 - Resolves approved or rejected claims back on Arc and executes payout from the pool
 - Surfaces live overview, coverage, pool, and claim activity data in the frontend
 
-## System Architecture
-
-```mermaid
-flowchart LR
-  U[Member]
-  F[React frontend]
-  R[Atlas relay API]
-
-  subgraph ARC[Arc Testnet - money layer]
-    P[AtlasPool.sol]
-    C[AtlasClaims.sol]
-  end
-
-  subgraph GEN[GenLayer StudioNet - intelligence layer]
-    J[atlas_jury.py]
-  end
-
-  U --> F
-  F -->|relative /api requests| R
-  F -->|wallet premium deposit| P
-  R -->|sponsored premium deposit| P
-  R -->|submit and queue claim| C
-  R -->|evaluate_claim(...)| J
-  J -->|finalized verdict| R
-  C -->|resolveAndPayClaim(...)| P
-```
-
 ## Dual-Chain Model
 
 ### Arc Testnet: money layer
