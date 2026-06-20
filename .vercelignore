@@ -1,0 +1,13 @@
+.git
+.vercel
+node_modules
+dist
+.env
+.env.*
+.codex-artifacts
+.codex-edge-profile
+.codex-logs
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+pnpm-debug.log*

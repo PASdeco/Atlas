@@ -21,8 +21,6 @@ async function main() {
     account: createAccount(privateKey),
   })
 
-  await client.initializeConsensusSmartContract()
-
   const contractPath = path.resolve(process.cwd(), 'contracts/atlas_jury.py')
   const code = new Uint8Array(readFileSync(contractPath))
 

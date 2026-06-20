@@ -576,20 +576,39 @@ export function AtlasAppProvider({ children }) {
         amountUsdc: plan.monthly,
       })
 
-      await registerWalletDeposit({
-        accessToken,
-        walletAddress,
-        planTitle: plan.title,
-        amountUsdc: plan.monthly,
-        depositHash: payload.depositHash,
-        approvalHash: payload.approvalHash,
-      })
+      let registrationMessage = ''
+
+      try {
+        const registration = await registerWalletDeposit({
+          accessToken,
+          walletAddress,
+          planTitle: plan.title,
+          amountUsdc: plan.monthly,
+          depositHash: payload.depositHash,
+          approvalHash: payload.approvalHash,
+        })
+        registrationMessage = registration?.message || ''
+      } catch (error) {
+        const refreshedOverview = await getAtlasOverview({
+          walletAddress,
+          accessToken,
+        })
+        setOverview(refreshedOverview)
+
+        if (!refreshedOverview?.member?.isCoverageActive) {
+          throw error
+        }
+
+        registrationMessage =
+          'Premium reached Arc and coverage is now active. Atlas is still syncing the deposit record.'
+      }
 
       setStatusMessage(
-        `Premium submitted on Arc Testnet for ${plan.title}. Transaction ${payload.depositHash.slice(
-          0,
-          10,
-        )}...`,
+        registrationMessage ||
+          `Premium submitted on Arc Testnet for ${plan.title}. Transaction ${payload.depositHash.slice(
+            0,
+            10,
+          )}...`,
       )
       await refreshOverview()
       return payload

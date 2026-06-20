@@ -11,8 +11,6 @@ export async function deployAtlasJuryIfNeeded() {
     throw new Error('Set GENLAYER_PRIVATE_KEY to deploy or use the AtlasJury StudioNet contract.')
   }
 
-  await genlayerClient.initializeConsensusSmartContract()
-
   const contractPath = path.resolve(process.cwd(), '../contracts/genlayer/contracts/atlas_jury.py')
   const code = new Uint8Array(readFileSync(contractPath))
 

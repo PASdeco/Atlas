@@ -133,7 +133,7 @@ const workflowSteps = [
   {
     step: '03',
     title: 'AI Jury Deliberates',
-    description: 'Specialized agents evaluate the proof set, policy terms, and pool health.',
+    description: 'Specialized agents evaluate the submitted claim packet, policy terms, and pool health.',
     icon: BrainCircuit,
   },
   {
@@ -171,7 +171,7 @@ const faqItems = [
   {
     question: 'How does the AI jury work?',
     answer:
-      'Atlas routes evidence through specialized agents that check policy terms, incident data, uploaded proof, and pool constraints before a verdict is signed.',
+      'Atlas routes a submitted claim packet through specialized agents that check policy terms, incident data, uploaded materials, and pool constraints before a verdict is signed.',
   },
   {
     question: 'What currencies does Atlas accept?',
@@ -1687,7 +1687,7 @@ function ClaimPage() {
 const approvedResult = {
   title: 'Claim Approved. $180.00 USDC is on its way to your wallet.',
   description:
-    'The evidence set was verified successfully and the payout instruction has already been queued.',
+    'The submitted claim packet passed the jury review and the payout instruction has already been queued.',
   amount: preciseMoneyFormatter.format(180),
   variant: 'approved',
 }
@@ -2237,15 +2237,15 @@ function getClaimOutcome(claim) {
     0
 
   return {
-    title: approved
+      title: approved
       ? `Claim Approved. ${preciseMoneyFormatter.format(Number(payoutAmount || 0))} USDC is on its way to your wallet.`
       : 'Claim Reviewed. The AI jury could not verify this claim yet.',
     description:
       claim.reason ||
       claim.description ||
       (approved
-        ? 'The evidence set was verified successfully and the payout instruction has already been queued.'
-        : 'Atlas needs clearer or additional evidence before funds can be released from the community pool.'),
+        ? 'The submitted claim packet passed jury review and the payout instruction has already been queued.'
+        : 'Atlas needs a clearer or stronger submitted claim packet before funds can be released from the community pool.'),
     amount: approved
       ? preciseMoneyFormatter.format(Number(payoutAmount || 0))
       : 'Needs more evidence',

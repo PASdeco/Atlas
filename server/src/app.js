@@ -357,40 +357,44 @@ app.get('/api/overview', async (request, response, next) => {
   }
 })
 
-app.post('/api/deposits/wallet', async (request, response) => {
-  const payload = walletDepositSchema.parse(request.body)
-  const existingDeposit = getDepositByArcHash(payload.depositHash)
+app.post('/api/deposits/wallet', async (request, response, next) => {
+  try {
+    const payload = walletDepositSchema.parse(request.body)
+    const existingDeposit = getDepositByArcHash(payload.depositHash)
 
-  if (existingDeposit) {
+    if (existingDeposit) {
+      response.json({
+        ok: true,
+        deposit: existingDeposit,
+        message: 'This wallet premium was already registered on Atlas.',
+      })
+      return
+    }
+
+    const verification = await verifyWalletDeposit(payload)
+
+    const record = createDeposit({
+      walletAddress: payload.walletAddress,
+      planTitle: payload.planTitle,
+      amountUsdc: payload.amountUsdc,
+      source: 'wallet',
+    })
+
+    const completed = updateDeposit(record.id, {
+      status: 'completed',
+      arcDepositHash: payload.depositHash,
+      arcApprovalHash: payload.approvalHash || null,
+      confirmedAt: new Date(Number(verification.block.timestamp) * 1000).toISOString(),
+    })
+
     response.json({
       ok: true,
-      deposit: existingDeposit,
-      message: 'This wallet premium was already registered on Atlas.',
+      deposit: completed,
+      message: 'Wallet premium confirmed on Arc. Coverage is active for the next 30 days.',
     })
-    return
+  } catch (error) {
+    next(error)
   }
-
-  const verification = await verifyWalletDeposit(payload)
-
-  const record = createDeposit({
-    walletAddress: payload.walletAddress,
-    planTitle: payload.planTitle,
-    amountUsdc: payload.amountUsdc,
-    source: 'wallet',
-  })
-
-  const completed = updateDeposit(record.id, {
-    status: 'completed',
-    arcDepositHash: payload.depositHash,
-    arcApprovalHash: payload.approvalHash || null,
-    confirmedAt: new Date(Number(verification.block.timestamp) * 1000).toISOString(),
-  })
-
-  response.json({
-    ok: true,
-    deposit: completed,
-    message: 'Wallet premium confirmed on Arc. Coverage is active for the next 30 days.',
-  })
 })
 
 app.post('/api/deposits/card', async (request, response) => {
@@ -667,7 +671,8 @@ function humanizeClaimStatus(claim) {
   return 'Pending'
 }
 
-app.use((error, _request, response) => {
+app.use((error, _request, response, next) => {
+  void next
   const status =
     error?.name === 'ZodError'
       ? 400

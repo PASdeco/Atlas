@@ -2,7 +2,7 @@
 
 Atlas is a dual-chain consumer protection protocol that keeps money movement on Arc Testnet and claim adjudication inside a GenLayer intelligent contract.
 
-Members activate coverage with USDC, file a claim through a familiar web interface, and receive a verdict that is produced inside GenLayer StudioNet consensus before payout is resolved on Arc.
+Members activate coverage with USDC, file a claim through a familiar web interface, and receive a verdict that is produced inside GenLayer StudioNet consensus from a submitted claim packet before payout is resolved on Arc.
 
 > Status: testnet prototype  
 > Money layer: Arc Testnet  
@@ -26,7 +26,7 @@ Traditional claims systems are slow, opaque, and operationally expensive. Atlas 
 - Accepts premium payments through direct wallet deposit, or card-triggered sponsored deposits when configured
 - Splits each premium between the community pool and Atlas treasury inside `AtlasPool.sol`
 - Registers claims on Arc through `AtlasClaims.sol`
-- Sends evidence metadata to a GenLayer intelligent contract for verdict generation
+- Sends a submitted claim packet and evidence metadata to a GenLayer intelligent contract for verdict generation
 - Resolves approved or rejected claims back on Arc and executes payout from the pool
 - Surfaces live overview, coverage, pool, and claim activity data in the frontend
 
@@ -73,7 +73,7 @@ Arc is responsible for settlement and fund custody:
 
 GenLayer is responsible for verdict generation:
 
-- receiving claim evidence metadata
+- receiving a submitted claim packet and evidence metadata
 - producing a verdict inside the intelligent contract
 - finalizing the result through StudioNet consensus
 - returning structured claim output for Arc resolution
@@ -88,15 +88,16 @@ The verdict flow is implemented in [`contracts/genlayer/contracts/atlas_jury.py`
 
 - `evaluate_claim(...)` receives the claim payload
 - the contract uses `gl.nondet.exec_prompt(...)` to generate structured AI output
-- validators accept only bounded JSON output that passes the contract's validation logic
+- validators independently re-run the reasoning flow and only accept matching decision classes
 - the result is finalized through GenLayer StudioNet consensus
 - the relay waits for finalization, reads the stored verdict back from the contract, and only then resolves the Arc claim
 
 Important implementation note:
 
 - the current contract version uses GenLayer AI prompt execution and consensus validation
-- it does **not** currently fetch external web sources during adjudication
-- verdict quality therefore depends on the evidence payload supplied to the contract call
+- it treats the input as a claimant-submitted claim packet, not independently verified evidence artifacts
+- it does **not** currently fetch external web sources or retrieve file contents during adjudication
+- verdict quality therefore depends on the submitted claim packet supplied to the contract call
 
 ## Product Flow
 
