@@ -48,7 +48,6 @@ import {
   Settings,
   Shield,
   ShieldCheck,
-  UploadCloud,
   Wallet,
   X,
   XCircle,
@@ -1405,11 +1404,17 @@ function ClaimPage() {
   const [form, setForm] = useState({
     category: 'Auto',
     description: '',
+    evidenceUrls: [''],
     files: [],
     requestedAmount: '10',
   })
 
   const outcome = getClaimOutcome(result)
+  const normalizedEvidenceUrls = form.evidenceUrls.map((url) => url.trim()).filter(Boolean)
+  const canSubmitClaim =
+    overview.member.canFileClaim &&
+    normalizedEvidenceUrls.length > 0 &&
+    form.description.trim().length >= 10
 
   const submitClaimFlow = async () => {
     setDeliberating(true)
@@ -1420,6 +1425,7 @@ function ClaimPage() {
       const claim = await submitClaim({
         category: form.category,
         description: form.description,
+        evidenceUrls: normalizedEvidenceUrls,
         files: form.files,
         requestedAmount: Number(form.requestedAmount),
       })
@@ -1526,27 +1532,28 @@ function ClaimPage() {
                   />
                   <small>Maximum payout request is $10.00 for now.</small>
                 </label>
-                <label className="upload-zone">
-                  <UploadCloud size={28} />
-                  <strong>Drop evidence here or browse files</strong>
-                  <span>Photos, receipts, reports, and travel confirmations all help the AI jury move faster.</span>
-                  <input
-                    type="file"
-                    multiple
-                    onChange={(event) => {
-                      const fileNames = Array.from(event.target.files ?? []).map((file) => file.name)
-                      setForm((current) => ({
-                        ...current,
-                        files: fileNames.length > 0 ? fileNames : current.files,
-                      }))
-                    }}
-                  />
-                </label>
+                <div className="evidence-url-grid">
+                  {[0, 1].map((index) => (
+                    <label key={index} className="text-field">
+                      <span>{index === 0 ? 'Evidence URL' : 'Second evidence URL'}</span>
+                      <input
+                        type="url"
+                        placeholder="https://..."
+                        value={form.evidenceUrls[index] || ''}
+                        onChange={(event) => {
+                          const nextUrls = [...form.evidenceUrls]
+                          nextUrls[index] = event.target.value
+                          setForm((current) => ({ ...current, evidenceUrls: nextUrls }))
+                        }}
+                      />
+                    </label>
+                  ))}
+                </div>
                 <div className="file-chip-row">
-                  {form.files.map((file) => (
-                    <span key={file} className="file-chip">
+                  {normalizedEvidenceUrls.map((url) => (
+                    <span key={url} className="file-chip evidence-chip">
                       <FileText size={14} />
-                      {file}
+                      {url}
                     </span>
                   ))}
                 </div>
@@ -1567,8 +1574,8 @@ function ClaimPage() {
                     <strong>{form.category}</strong>
                   </div>
                   <div className="review-card">
-                    <span>Files attached</span>
-                    <strong>{form.files.length}</strong>
+                    <span>Evidence links</span>
+                    <strong>{normalizedEvidenceUrls.length}</strong>
                   </div>
                   <div className="review-card">
                     <span>Requested payout</span>
@@ -1611,13 +1618,15 @@ function ClaimPage() {
                   type="button"
                   className="atlas-button primary"
                   onClick={submitClaimFlow}
-                  disabled={busyAction === 'claim' || !overview.member.canFileClaim}
+                  disabled={busyAction === 'claim' || !canSubmitClaim}
                 >
                   {busyAction === 'claim'
                     ? 'Submitting...'
-                    : overview.member.canFileClaim
+                    : canSubmitClaim
                       ? 'Submit to AI Jury'
-                      : 'Premium Required'}
+                      : overview.member.canFileClaim
+                        ? 'Evidence Required'
+                        : 'Premium Required'}
                 </button>
               )}
             </div>
