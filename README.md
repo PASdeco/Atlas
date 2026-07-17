@@ -200,6 +200,7 @@ Important:
 | `VITE_PRIVY_CLIENT_ID` | recommended | Privy client ID |
 | `VITE_WALLETCONNECT_PROJECT_ID` | for external wallets | WalletConnect project ID |
 | `VITE_ARC_RPC_URL` | optional | Arc RPC override for the frontend |
+| `VITE_ARC_RPC_FALLBACK_URLS` | optional | comma-separated fallback Arc RPC URLs for frontend receipt checks |
 | `VITE_ARC_USDC_ADDRESS` | yes | Arc Testnet USDC address |
 | `VITE_ATLAS_POOL_ADDRESS` | yes | deployed `AtlasPool` contract |
 | `VITE_ATLAS_CLAIMS_ADDRESS` | yes | deployed `AtlasClaims` contract |
@@ -221,6 +222,7 @@ Important:
 | Variable | Required | Purpose |
 | --- | --- | --- |
 | `ARC_RPC_URL` | yes | Arc RPC used by the relay |
+| `ARC_RPC_FALLBACK_URLS` | optional | comma-separated fallback Arc RPC URLs used when the primary is rate-limited |
 | `ARC_EXPLORER_URL` | optional | Arc explorer base URL |
 | `ARC_USDC_ADDRESS` | yes | USDC token address on Arc Testnet |
 | `ARC_DEPLOYER_PRIVATE_KEY` | deploys / fallback sponsor | Arc deployer key |
@@ -230,6 +232,8 @@ Important:
 | `ATLAS_POOL_ADDRESS` | yes | deployed Arc pool contract |
 | `ATLAS_CLAIMS_ADDRESS` | yes | deployed Arc claims contract |
 | `ATLAS_GENLAYER_RELAYER` | optional | relayer address tracked in deployment flow |
+
+The example environment uses Arc's free public QuickNode testnet endpoint first, then falls back to the free dRPC, Blockdaemon, and Arc primary testnet endpoints when a shared provider rate-limits public traffic.
 
 ### GenLayer
 
