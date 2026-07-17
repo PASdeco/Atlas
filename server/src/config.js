@@ -1,7 +1,7 @@
 import { config as dotenvConfig } from 'dotenv'
 import { dirname, resolve } from 'node:path'
 import { fileURLToPath } from 'node:url'
-import { createPublicClient, createWalletClient, formatUnits, http, parseUnits } from 'viem'
+import { createPublicClient, createWalletClient, fallback, formatUnits, http, parseUnits } from 'viem'
 import { privateKeyToAccount } from 'viem/accounts'
 import { createAccount as createGenlayerAccount, createClient as createGenlayerClient } from 'genlayer-js'
 import { studionet } from 'genlayer-js/chains'
@@ -11,6 +11,7 @@ import {
   ARC_TESTNET_CHAIN,
   ARC_TESTNET_EXPLORER_URL,
   ARC_TESTNET_RPC_URL,
+  ARC_TESTNET_RPC_URLS,
   ARC_TESTNET_USDC_ADDRESS,
   ATLAS_DEFAULT_FEE_BPS,
   GENLAYER_STUDIONET_EXPLORER_URL,
@@ -28,6 +29,17 @@ function getEnv(name, fallback = '') {
   return process.env[name] || fallback
 }
 
+function parseUrlList(value) {
+  return String(value || '')
+    .split(/[,\s]+/)
+    .map((url) => url.trim())
+    .filter(Boolean)
+}
+
+function uniqueValues(values) {
+  return [...new Set(values.filter(Boolean))]
+}
+
 function maybeAccount(privateKey) {
   return privateKey ? privateKeyToAccount(privateKey) : null
 }
@@ -36,13 +48,20 @@ function maybeGenlayerAccount(privateKey) {
   return privateKey ? createGenlayerAccount(privateKey) : null
 }
 
+const arcRpcUrls = uniqueValues([
+  getEnv('ARC_RPC_URL', ARC_TESTNET_RPC_URL),
+  ...parseUrlList(getEnv('ARC_RPC_FALLBACK_URLS')),
+  ...ARC_TESTNET_RPC_URLS,
+])
+
 export const serverConfig = {
   port: Number(getEnv('ATLAS_API_PORT', '8787')),
   appUrl: getEnv('ATLAS_APP_URL', 'http://localhost:5173'),
   atlasProtocolName: getEnv('ATLAS_PROTOCOL_NAME', 'Atlas'),
   arc: {
     chain: ARC_TESTNET_CHAIN,
-    rpcUrl: getEnv('ARC_RPC_URL', ARC_TESTNET_RPC_URL),
+    rpcUrl: arcRpcUrls[0],
+    rpcUrls: arcRpcUrls,
     explorerUrl: getEnv('ARC_EXPLORER_URL', ARC_TESTNET_EXPLORER_URL),
     usdcAddress: getEnv('ARC_USDC_ADDRESS', ARC_TESTNET_USDC_ADDRESS),
     poolAddress: getEnv('VITE_ATLAS_POOL_ADDRESS', getEnv('ATLAS_POOL_ADDRESS')),
@@ -70,9 +89,27 @@ export const serverConfig = {
   },
 }
 
+function createArcTransport() {
+  const transports = serverConfig.arc.rpcUrls.map((url) =>
+    http(url, {
+      retryCount: 1,
+      timeout: 12_000,
+    }),
+  )
+
+  if (transports.length === 1) {
+    return transports[0]
+  }
+
+  return fallback(transports, {
+    rank: false,
+    retryCount: 0,
+  })
+}
+
 export const arcPublicClient = createPublicClient({
   chain: serverConfig.arc.chain,
-  transport: http(serverConfig.arc.rpcUrl),
+  transport: createArcTransport(),
 })
 
 export const arcSponsorAccount = maybeAccount(serverConfig.arc.sponsorPrivateKey)
@@ -81,7 +118,7 @@ export const arcWalletClient = arcSponsorAccount
   ? createWalletClient({
       account: arcSponsorAccount,
       chain: serverConfig.arc.chain,
-      transport: http(serverConfig.arc.rpcUrl),
+      transport: createArcTransport(),
     })
   : null
 

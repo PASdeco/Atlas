@@ -1,6 +1,7 @@
 import cors from 'cors'
 import express from 'express'
 import Stripe from 'stripe'
+import { getAddress } from 'viem'
 import { z } from 'zod'
 import { getAuthenticatedUser } from './auth.js'
 import { formatUsdc, serverConfig } from './config.js'
@@ -37,6 +38,36 @@ const DAY_MS = 24 * 60 * 60 * 1000
 const MAX_CLAIM_AMOUNT_USDC = 10
 const ZERO_ADDRESS = '0x0000000000000000000000000000000000000000'
 
+function normalizeWalletAddress(value, { optional = false } = {}) {
+  const raw = String(value || '').trim()
+  if (!raw && optional) {
+    return ''
+  }
+
+  try {
+    return getAddress(raw.toLowerCase())
+  } catch {
+    const error = new Error('Invalid wallet address.')
+    error.status = 400
+    throw error
+  }
+}
+
+const walletAddressSchema = z
+  .string()
+  .trim()
+  .transform((value, context) => {
+    try {
+      return normalizeWalletAddress(value)
+    } catch {
+      context.addIssue({
+        code: z.ZodIssueCode.custom,
+        message: 'Invalid wallet address.',
+      })
+      return z.NEVER
+    }
+  })
+
 const evidenceUrlSchema = z
   .string()
   .trim()
@@ -46,7 +77,7 @@ const evidenceUrlSchema = z
   })
 
 const claimSchema = z.object({
-  walletAddress: z.string().min(10),
+  walletAddress: walletAddressSchema,
   category: z.string().min(2),
   description: z.string().min(10),
   files: z.array(z.string()).default([]),
@@ -61,13 +92,13 @@ const claimSchema = z.object({
 })
 
 const depositSchema = z.object({
-  walletAddress: z.string().min(10),
+  walletAddress: walletAddressSchema,
   planTitle: z.string().min(2),
   amountUsdc: z.number().positive(),
 })
 
 const walletDepositSchema = z.object({
-  walletAddress: z.string().min(10),
+  walletAddress: walletAddressSchema,
   planTitle: z.string().min(2),
   amountUsdc: z.number().positive(),
   depositHash: z.string().regex(/^0x[a-fA-F0-9]{64}$/),
@@ -242,7 +273,7 @@ function isArcRpcLimitError(error) {
 
 function getPublicErrorMessage(error) {
   if (isArcRpcLimitError(error)) {
-    return 'Arc Testnet RPC is rate-limiting requests right now. Wait a minute and retry, or configure a dedicated ARC_RPC_URL.'
+    return 'Arc Testnet RPC providers are rate-limiting requests right now. Wait a minute and retry, or configure a dedicated ARC_RPC_URL.'
   }
 
   return error?.message || 'Atlas request failed.'
@@ -339,7 +370,7 @@ function assertCoverageActive(coverage) {
 }
 
 function restoreDepositFromStripeSession(session, requestedDepositId) {
-  const walletAddress = String(session?.metadata?.walletAddress || '').trim()
+  const walletAddress = normalizeWalletAddress(session?.metadata?.walletAddress)
   const planTitle = String(session?.metadata?.planTitle || '').trim()
   const amountUsdc = Number(session?.metadata?.amountUsdc || 0)
   const metadataDepositId = Number(session?.metadata?.depositId || 0)
@@ -372,6 +403,7 @@ app.get('/api/health', (_request, response) => {
   response.json({
     ok: true,
     arcRpcUrl: serverConfig.arc.rpcUrl,
+    arcRpcFallbackUrls: serverConfig.arc.rpcUrls.slice(1),
     genlayerRpcUrl: serverConfig.genlayer.rpcUrl,
   })
 })
@@ -385,6 +417,7 @@ app.get('/api/config', async (request, response) => {
     arc: {
       chainId: serverConfig.arc.chain.id,
       rpcUrl: serverConfig.arc.rpcUrl,
+      rpcFallbackUrls: serverConfig.arc.rpcUrls.slice(1),
       explorerUrl: serverConfig.arc.explorerUrl,
       usdcAddress: serverConfig.arc.usdcAddress,
       poolAddress: serverConfig.arc.poolAddress || '',
@@ -402,17 +435,35 @@ app.get('/api/config', async (request, response) => {
 })
 
 app.get('/api/overview', async (request, response, next) => {
-  const walletAddress = String(request.query.wallet || '')
+  const walletAddress = normalizeWalletAddress(request.query.wallet, { optional: true })
 
   try {
     const arcOverview = await readArcOverview(walletAddress)
     const historicalPremiumUsdc = formatUsdc(arcOverview.memberPremium || 0n)
-    const [globalRecentClaims, latestPremiumDeposit] = await Promise.all([
-      readRecentArcClaims(),
-      walletAddress && historicalPremiumUsdc > 0
-        ? readLatestPremiumDepositByMember(walletAddress)
-        : Promise.resolve(null),
-    ])
+    let globalRecentClaims = []
+    let latestPremiumDeposit = null
+    let rpcDegraded = false
+
+    try {
+      globalRecentClaims = await readRecentArcClaims()
+    } catch (error) {
+      if (!isArcRpcLimitError(error)) {
+        throw error
+      }
+      rpcDegraded = true
+    }
+
+    if (walletAddress && historicalPremiumUsdc > 0) {
+      try {
+        latestPremiumDeposit = await readLatestPremiumDepositByMember(walletAddress)
+      } catch (error) {
+        if (!isArcRpcLimitError(error)) {
+          throw error
+        }
+        rpcDegraded = true
+      }
+    }
+
     const chainClaims = walletAddress
       ? globalRecentClaims.filter(
           (claim) =>
@@ -432,6 +483,7 @@ app.get('/api/overview', async (request, response, next) => {
         latestCompletedDeposit: walletAddress
           ? getLatestCompletedDepositByWallet(walletAddress)
           : null,
+        rpcDegraded,
       }),
     )
   } catch (error) {

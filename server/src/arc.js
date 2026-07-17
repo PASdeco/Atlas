@@ -2,7 +2,7 @@ import { decodeEventLog, parseAbiItem } from 'viem'
 import { arcPublicClient, arcWalletClient, atlasContracts, formatUsdc, parseUsdc } from './config.js'
 
 const ZERO_ADDRESS = '0x0000000000000000000000000000000000000000'
-const CLAIM_SCAN_LIMIT = 12
+const CLAIM_SCAN_LIMIT = 6
 const ARC_READ_CACHE_TTL_MS = 20 * 1000
 const ARC_READ_STALE_TTL_MS = 3 * 60 * 1000
 const PREMIUM_CACHE_TTL_MS = 60 * 1000
