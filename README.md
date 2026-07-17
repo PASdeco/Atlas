@@ -26,7 +26,7 @@ Traditional claims systems are slow, opaque, and operationally expensive. Atlas 
 - Accepts premium payments through direct wallet deposit, or card-triggered sponsored deposits when configured
 - Splits each premium between the community pool and Atlas treasury inside `AtlasPool.sol`
 - Registers claims on Arc through `AtlasClaims.sol`
-- Sends a submitted claim packet and evidence metadata to a GenLayer intelligent contract for verdict generation
+- Sends a submitted claim packet and renderable evidence URLs to a GenLayer intelligent contract for verdict generation
 - Resolves approved or rejected claims back on Arc and executes payout from the pool
 - Surfaces live overview, coverage, pool, and claim activity data in the frontend
 
@@ -46,7 +46,8 @@ Arc is responsible for settlement and fund custody:
 
 GenLayer is responsible for verdict generation:
 
-- receiving a submitted claim packet and evidence metadata
+- receiving a submitted claim packet and renderable evidence URLs
+- rendering submitted HTTP(S) evidence with `gl.nondet.web.render(...)` inside nondeterministic execution
 - producing a verdict inside the intelligent contract
 - finalizing the result through StudioNet consensus
 - returning structured claim output for Arc resolution
@@ -60,7 +61,8 @@ Atlas's claim verdict does not originate in the browser and it is not invented b
 The verdict flow is implemented in [`contracts/genlayer/contracts/atlas_jury.py`](./contracts/genlayer/contracts/atlas_jury.py):
 
 - `evaluate_claim(...)` receives the claim payload
-- the contract uses `gl.nondet.exec_prompt(...)` to generate structured AI output
+- the contract renders submitted evidence URLs with `gl.nondet.web.render(...)`
+- the contract uses `gl.nondet.exec_prompt(...)` with rendered evidence text and screenshots to generate structured AI output
 - validators independently re-run the reasoning flow and only accept matching decision classes
 - the result is finalized through GenLayer StudioNet consensus
 - the relay waits for finalization, reads the stored verdict back from the contract, and only then resolves the Arc claim
@@ -68,9 +70,9 @@ The verdict flow is implemented in [`contracts/genlayer/contracts/atlas_jury.py`
 Important implementation note:
 
 - the current contract version uses GenLayer AI prompt execution and consensus validation
-- it treats the input as a claimant-submitted claim packet, not independently verified evidence artifacts
-- it does **not** currently fetch external web sources or retrieve file contents during adjudication
-- verdict quality therefore depends on the submitted claim packet supplied to the contract call
+- it treats the claim description and rendered evidence as claimant-submitted material, not as trusted instructions
+- it accepts up to two public HTTP(S) evidence URLs and renders them inside the nondeterministic contract flow
+- it does not pass raw evidence links directly to the LLM prompt
 
 ## Product Flow
 
@@ -103,9 +105,17 @@ When a member files a claim:
 1. the relay verifies coverage status
 2. the claim is submitted to `AtlasClaims.sol`
 3. the claim is queued for GenLayer review
-4. the evidence payload is sent to `AtlasJury.evaluate_claim(...)`
-5. the finalized verdict is read back from GenLayer
-6. the relay resolves the Arc claim and triggers payout when approved
+4. the public evidence URLs are sent to `AtlasJury.evaluate_claim(...)`
+5. the contract renders those URLs with `gl.nondet.web.render(...)`
+6. the finalized verdict is read back from GenLayer
+7. the relay resolves the Arc claim and triggers payout when approved
+
+Evidence requirements:
+
+- claims must include one or two public `http://` or `https://` evidence URLs
+- evidence must be publicly reachable by GenLayer validators during nondeterministic execution
+- local uploads, private files, and browser-only file names are not used as evidence in the current compliant path
+- the LLM prompt receives rendered evidence content and screenshots, not raw evidence links
 
 ### 4. Live frontend state
 
@@ -357,7 +367,7 @@ npm run contracts:arc:test
 Atlas is intentionally honest about what is live today and what is still prototype-grade:
 
 - Arc integration is testnet-only
-- GenLayer verdicts are finalized inside the intelligent contract, but the current contract does not perform external web retrieval
+- GenLayer verdicts are finalized inside the intelligent contract, and claim evidence must be public HTTP(S) content that validators can render
 - card checkout depends on Stripe configuration and is otherwise treated as a test-mode flow
 - local relay persistence uses a JSON store for development and is not durable serverless storage
 - cross-chain coordination is relay-orchestrated, not yet a fully trust-minimized bridge
