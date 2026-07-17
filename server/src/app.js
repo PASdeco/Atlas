@@ -7,7 +7,6 @@ import { formatUsdc, serverConfig } from './config.js'
 import {
   assertArcContractsHealthy,
   queueClaimOnArc,
-  readArcClaimsByMember,
   readRecentArcClaims,
   readLatestPremiumDepositByMember,
   readArcOverview,
@@ -36,12 +35,22 @@ const stripe = serverConfig.stripe.secretKey ? new Stripe(serverConfig.stripe.se
 const COVERAGE_WINDOW_DAYS = 30
 const DAY_MS = 24 * 60 * 60 * 1000
 const MAX_CLAIM_AMOUNT_USDC = 10
+const ZERO_ADDRESS = '0x0000000000000000000000000000000000000000'
+
+const evidenceUrlSchema = z
+  .string()
+  .trim()
+  .url()
+  .refine((url) => /^https?:\/\//i.test(url), {
+    message: 'Evidence must be an HTTP(S) URL that GenLayer can render.',
+  })
 
 const claimSchema = z.object({
   walletAddress: z.string().min(10),
   category: z.string().min(2),
   description: z.string().min(10),
   files: z.array(z.string()).default([]),
+  evidenceUrls: z.array(evidenceUrlSchema).min(1).max(2),
   requestedAmount: z
     .number()
     .positive()
@@ -202,6 +211,123 @@ function buildPoolComposition(arcOverview) {
   ].filter((entry) => entry.amountUsdc > 0)
 }
 
+function buildEmptyArcOverview() {
+  return {
+    poolSnapshot: [
+      serverConfig.arc.usdcAddress,
+      ZERO_ADDRESS,
+      0,
+      0n,
+      0n,
+      ZERO_ADDRESS,
+    ],
+    memberPremium: 0n,
+  }
+}
+
+function isArcRpcLimitError(error) {
+  const message = [
+    error?.message,
+    error?.shortMessage,
+    error?.details,
+    error?.cause?.message,
+    error?.cause?.shortMessage,
+    error?.cause?.details,
+  ]
+    .filter(Boolean)
+    .join(' ')
+
+  return /request limit reached|rate limit|too many requests/i.test(message)
+}
+
+function getPublicErrorMessage(error) {
+  if (isArcRpcLimitError(error)) {
+    return 'Arc Testnet RPC is rate-limiting requests right now. Wait a minute and retry, or configure a dedicated ARC_RPC_URL.'
+  }
+
+  return error?.message || 'Atlas request failed.'
+}
+
+function buildOverviewPayload({
+  walletAddress,
+  arcOverview = buildEmptyArcOverview(),
+  claims = [],
+  globalRecentClaims = [],
+  latestPremiumDeposit = null,
+  latestCompletedDeposit = null,
+  rpcDegraded = false,
+}) {
+  const historicalPremiumUsdc = formatUsdc(arcOverview.memberPremium || 0n)
+  const latestCoverageDeposit = latestPremiumDeposit || latestCompletedDeposit
+  const coverage = buildCoverageState({
+    latestDeposit: latestCoverageDeposit,
+    fallbackPremiumUsdc: historicalPremiumUsdc,
+  })
+
+  return {
+    member: {
+      walletAddress,
+      walletDisplay: walletAddress ? `${walletAddress.slice(0, 6)}...${walletAddress.slice(-4)}` : '',
+      monthlyPremiumUsdc: coverage.monthlyPremiumUsdc,
+      renewsInDays: coverage.renewsInDays,
+      isCoverageActive: coverage.isCoverageActive,
+      canFileClaim: coverage.canFileClaim,
+      coverageActivatedAt: coverage.coverageActivatedAt,
+      coverageExpiresAt: coverage.coverageExpiresAt,
+      lastPremiumPaidAt: coverage.lastPremiumPaidAt,
+      totalPaidToYouUsdc: claims
+        .filter((claim) => claim.approved)
+        .reduce((sum, claim) => sum + Number(claim.payoutAmountUsdc || 0), 0),
+      activeClaims: claims.filter((claim) => claim.status !== 'rejected' && claim.status !== 'paid').length,
+      approvedClaims: claims.filter((claim) => claim.approved).length,
+      pendingClaims: claims.filter((claim) => !claim.approved && claim.status !== 'rejected').length,
+      payoutWallet: walletAddress || 'Embedded wallet pending',
+    },
+    pool: {
+      poolSizeUsdc: formatUsdc(arcOverview.poolSnapshot?.[3] || 0n),
+      claimsPaid: globalRecentClaims.filter((claim) => claim.approved).length,
+      activeMembers: 0,
+      protocolFeeCollectedUsdc: formatUsdc(arcOverview.poolSnapshot?.[4] || 0n),
+      reserveBufferUsdc: formatUsdc(arcOverview.poolSnapshot?.[3] || 0n),
+      reserveCoverageRatio:
+        globalRecentClaims.filter((claim) => claim.status !== 'rejected').length > 0
+          ? Number(
+              (
+                (formatUsdc(arcOverview.poolSnapshot?.[3] || 0n) /
+                  Math.max(
+                    1,
+                    globalRecentClaims
+                      .filter((claim) => claim.status !== 'rejected')
+                      .reduce((sum, claim) => sum + Number(claim.requestedAmountUsdc || 0), 0),
+                  )) *
+                100
+              ).toFixed(0),
+            )
+          : 0,
+      treasuryBalanceUsdc: formatUsdc(arcOverview.poolSnapshot?.[4] || 0n),
+    },
+    recentClaims: claims.slice(0, 6).map((claim) => ({
+      id: claim.id,
+      type: `${claim.category} claim`,
+      amount: `$${Number(claim.payoutAmountUsdc || claim.requestedAmount || 0).toFixed(0)}`,
+      date: new Date(claim.createdAt).toLocaleDateString('en-US', {
+        month: 'short',
+        day: 'numeric',
+      }),
+      status: humanizeClaimStatus(claim),
+      reason: claim.reason,
+    })),
+    recentActivity: buildRecentActivity(globalRecentClaims),
+    poolComposition: buildPoolComposition(arcOverview),
+    signal: rpcDegraded
+      ? {
+          arcRpcDegraded: true,
+          message: 'Arc RPC request limit reached; Atlas is showing local or cached data.',
+        }
+      : {},
+  }
+}
+
 function assertCoverageActive(coverage) {
   if (coverage?.isCoverageActive) {
     return
@@ -276,83 +402,56 @@ app.get('/api/config', async (request, response) => {
 })
 
 app.get('/api/overview', async (request, response, next) => {
+  const walletAddress = String(request.query.wallet || '')
+
   try {
-    const walletAddress = String(request.query.wallet || '')
     const arcOverview = await readArcOverview(walletAddress)
     const historicalPremiumUsdc = formatUsdc(arcOverview.memberPremium || 0n)
-    const [chainClaims, globalRecentClaims, latestPremiumDeposit] = await Promise.all([
-      walletAddress ? readArcClaimsByMember(walletAddress) : Promise.resolve([]),
+    const [globalRecentClaims, latestPremiumDeposit] = await Promise.all([
       readRecentArcClaims(),
       walletAddress && historicalPremiumUsdc > 0
         ? readLatestPremiumDepositByMember(walletAddress)
         : Promise.resolve(null),
     ])
+    const chainClaims = walletAddress
+      ? globalRecentClaims.filter(
+          (claim) =>
+            String(claim.walletAddress || '').toLowerCase() === walletAddress.toLowerCase(),
+        )
+      : []
     const localClaims = walletAddress ? listClaimsByWallet(walletAddress) : []
     const claims = chainClaims.length > 0 ? chainClaims : localClaims
-    const latestCompletedDeposit =
-      latestPremiumDeposit || (walletAddress ? getLatestCompletedDepositByWallet(walletAddress) : null)
-    const coverage = buildCoverageState({
-      latestDeposit: latestCompletedDeposit,
-      fallbackPremiumUsdc: historicalPremiumUsdc,
-    })
 
-    response.json({
-      member: {
+    response.json(
+      buildOverviewPayload({
         walletAddress,
-        walletDisplay: walletAddress ? `${walletAddress.slice(0, 6)}...${walletAddress.slice(-4)}` : '',
-        monthlyPremiumUsdc: coverage.monthlyPremiumUsdc,
-        renewsInDays: coverage.renewsInDays,
-        isCoverageActive: coverage.isCoverageActive,
-        canFileClaim: coverage.canFileClaim,
-        coverageActivatedAt: coverage.coverageActivatedAt,
-        coverageExpiresAt: coverage.coverageExpiresAt,
-        lastPremiumPaidAt: coverage.lastPremiumPaidAt,
-        totalPaidToYouUsdc: claims
-          .filter((claim) => claim.approved)
-          .reduce((sum, claim) => sum + Number(claim.payoutAmountUsdc || 0), 0),
-        activeClaims: claims.filter((claim) => claim.status !== 'rejected' && claim.status !== 'paid').length,
-        approvedClaims: claims.filter((claim) => claim.approved).length,
-        pendingClaims: claims.filter((claim) => !claim.approved && claim.status !== 'rejected').length,
-        payoutWallet: walletAddress || 'Embedded wallet pending',
-      },
-      pool: {
-        poolSizeUsdc: formatUsdc(arcOverview.poolSnapshot?.[3] || 0n),
-        claimsPaid: globalRecentClaims.filter((claim) => claim.approved).length,
-        activeMembers: 0,
-        protocolFeeCollectedUsdc: formatUsdc(arcOverview.poolSnapshot?.[4] || 0n),
-        reserveBufferUsdc: formatUsdc(arcOverview.poolSnapshot?.[3] || 0n),
-        reserveCoverageRatio:
-          globalRecentClaims.filter((claim) => claim.status !== 'rejected').length > 0
-            ? Number(
-                (
-                  (formatUsdc(arcOverview.poolSnapshot?.[3] || 0n) /
-                    Math.max(
-                      1,
-                      globalRecentClaims
-                        .filter((claim) => claim.status !== 'rejected')
-                        .reduce((sum, claim) => sum + Number(claim.requestedAmountUsdc || 0), 0),
-                    )) *
-                  100
-                ).toFixed(0),
-              )
-            : 0,
-        treasuryBalanceUsdc: formatUsdc(arcOverview.poolSnapshot?.[4] || 0n),
-      },
-      recentClaims: claims.slice(0, 6).map((claim) => ({
-        id: claim.id,
-        type: `${claim.category} claim`,
-        amount: `$${Number(claim.payoutAmountUsdc || claim.requestedAmount || 0).toFixed(0)}`,
-        date: new Date(claim.createdAt).toLocaleDateString('en-US', {
-          month: 'short',
-          day: 'numeric',
-        }),
-        status: humanizeClaimStatus(claim),
-        reason: claim.reason,
-      })),
-      recentActivity: buildRecentActivity(globalRecentClaims),
-      poolComposition: buildPoolComposition(arcOverview),
-    })
+        arcOverview,
+        claims,
+        globalRecentClaims,
+        latestPremiumDeposit,
+        latestCompletedDeposit: walletAddress
+          ? getLatestCompletedDepositByWallet(walletAddress)
+          : null,
+      }),
+    )
   } catch (error) {
+    if (isArcRpcLimitError(error)) {
+      const localClaims = walletAddress ? listClaimsByWallet(walletAddress) : []
+      response.json(
+        buildOverviewPayload({
+          walletAddress,
+          arcOverview: buildEmptyArcOverview(),
+          claims: localClaims,
+          globalRecentClaims: localClaims,
+          latestCompletedDeposit: walletAddress
+            ? getLatestCompletedDepositByWallet(walletAddress)
+            : null,
+          rpcDegraded: true,
+        }),
+      )
+      return
+    }
+
     next(error)
   }
 })
@@ -534,24 +633,43 @@ app.post('/api/deposits/card/:depositId/confirm', async (request, response) => {
 
 app.post('/api/claims', async (request, response) => {
   const payload = claimSchema.parse(request.body)
-  await assertArcContractsHealthy()
-  const arcOverview = await readArcOverview(payload.walletAddress)
-  const historicalPremiumUsdc = formatUsdc(arcOverview.memberPremium || 0n)
-  const latestPremiumDeposit =
-    historicalPremiumUsdc > 0
-      ? await readLatestPremiumDepositByMember(payload.walletAddress)
-      : null
+  const latestLocalDeposit = getLatestCompletedDepositByWallet(payload.walletAddress)
+  let historicalPremiumUsdc = Number(latestLocalDeposit?.amountUsdc || 0)
+  let latestPremiumDeposit = latestLocalDeposit
+
+  if (!latestLocalDeposit) {
+    try {
+      const arcOverview = await readArcOverview(payload.walletAddress)
+      historicalPremiumUsdc = formatUsdc(arcOverview.memberPremium || 0n)
+      latestPremiumDeposit =
+        historicalPremiumUsdc > 0
+          ? await readLatestPremiumDepositByMember(payload.walletAddress)
+          : null
+    } catch (error) {
+      if (isArcRpcLimitError(error)) {
+        response.status(503).json({
+          error: getPublicErrorMessage(error),
+        })
+        return
+      }
+
+      throw error
+    }
+  }
+
   const coverage = buildCoverageState({
-    latestDeposit:
-      latestPremiumDeposit || getLatestCompletedDepositByWallet(payload.walletAddress),
+    latestDeposit: latestPremiumDeposit,
     fallbackPremiumUsdc: historicalPremiumUsdc,
   })
   assertCoverageActive(coverage)
 
   const externalReference = `atlas-claim-${Date.now()}`
-  const evidenceUri = `atlas://evidence/${externalReference}`
+  const evidenceUrls = payload.evidenceUrls.slice(0, 2)
+  const evidenceUri = evidenceUrls[0]
   const evidenceManifest = JSON.stringify({
+    urls: evidenceUrls,
     files: payload.files,
+    renderPattern: 'gl.nondet.web.render',
   })
 
   const claimRecord = createClaimRecord({
@@ -559,6 +677,7 @@ app.post('/api/claims', async (request, response) => {
     category: payload.category,
     description: payload.description,
     files: payload.files,
+    evidenceUrls,
     requestedAmount: payload.requestedAmount,
     requestedAmountUsdc: payload.requestedAmount,
     payoutAmountUsdc: 0,
@@ -634,7 +753,7 @@ app.post('/api/claims', async (request, response) => {
   } catch (error) {
     const failed = updateClaimRecord(claimRecord.id, {
       status: 'submitted',
-      reason: error.message,
+      reason: getPublicErrorMessage(error),
     })
 
     response.json({
@@ -676,10 +795,12 @@ app.use((error, _request, response, next) => {
   const status =
     error?.name === 'ZodError'
       ? 400
+      : isArcRpcLimitError(error)
+        ? 503
       : Number(error?.statusCode || error?.status || 500)
 
   response.status(Number.isFinite(status) ? status : 500).json({
-    error: error?.message || 'Atlas request failed.',
+    error: getPublicErrorMessage(error),
   })
 })
 

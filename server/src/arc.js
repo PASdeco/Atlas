@@ -2,7 +2,9 @@ import { decodeEventLog, parseAbiItem } from 'viem'
 import { arcPublicClient, arcWalletClient, atlasContracts, formatUsdc, parseUsdc } from './config.js'
 
 const ZERO_ADDRESS = '0x0000000000000000000000000000000000000000'
-const CLAIM_SCAN_LIMIT = 50
+const CLAIM_SCAN_LIMIT = 12
+const ARC_READ_CACHE_TTL_MS = 20 * 1000
+const ARC_READ_STALE_TTL_MS = 3 * 60 * 1000
 const PREMIUM_CACHE_TTL_MS = 60 * 1000
 const PREMIUM_LOG_CHUNK_SIZE = 9_000n
 const PREMIUM_LOOKBACK_BLOCKS = 1_500_000n
@@ -13,6 +15,9 @@ const claimSubmittedEvent = parseAbiItem(
   'event ClaimSubmitted(uint256 indexed claimId, address indexed member, string category, uint256 requestedAmount, string externalReference)',
 )
 const latestPremiumDepositCache = new Map()
+const arcHealthCache = new Map()
+const arcOverviewCache = new Map()
+const recentClaimsCache = new Map()
 
 function normalizeAddress(value = '') {
   return String(value).toLowerCase()
@@ -20,6 +25,51 @@ function normalizeAddress(value = '') {
 
 function wait(ms) {
   return new Promise((resolve) => setTimeout(resolve, ms))
+}
+
+function readFreshCache(cache, key) {
+  const cached = cache.get(key)
+  if (cached && cached.expiresAt > Date.now()) {
+    return cached.value
+  }
+  return null
+}
+
+function readStaleCache(cache, key) {
+  const cached = cache.get(key)
+  if (cached && cached.staleUntil > Date.now()) {
+    return cached.value
+  }
+  return null
+}
+
+function writeReadCache(cache, key, value) {
+  cache.set(key, {
+    value,
+    expiresAt: Date.now() + ARC_READ_CACHE_TTL_MS,
+    staleUntil: Date.now() + ARC_READ_STALE_TTL_MS,
+  })
+  return value
+}
+
+function invalidateArcReadCaches() {
+  arcOverviewCache.clear()
+  recentClaimsCache.clear()
+}
+
+function isRpcLimitError(error) {
+  const message = [
+    error?.message,
+    error?.shortMessage,
+    error?.details,
+    error?.cause?.message,
+    error?.cause?.shortMessage,
+    error?.cause?.details,
+  ]
+    .filter(Boolean)
+    .join(' ')
+
+  return /request limit reached|rate limit|too many requests/i.test(message)
 }
 
 function getClaimStatusDetails(status) {
@@ -76,11 +126,44 @@ function requireArcWriteReady() {
 export async function assertArcContractsHealthy() {
   requireArcWriteReady()
 
-  const [poolUsdcAddress, , , , , linkedClaimsAddress] = await arcPublicClient.readContract({
-    address: atlasContracts.pool.address,
-    abi: atlasContracts.pool.abi,
-    functionName: 'getPoolSnapshot',
-  })
+  const cacheKey = [
+    normalizeAddress(atlasContracts.pool.address),
+    normalizeAddress(atlasContracts.claims.address),
+    normalizeAddress(atlasContracts.usdc.address),
+  ].join(':')
+  const fresh = readFreshCache(arcHealthCache, cacheKey)
+  if (fresh) {
+    return fresh
+  }
+
+  let poolUsdcAddress
+  let linkedClaimsAddress
+
+  try {
+    const poolSnapshot = await arcPublicClient.readContract({
+      address: atlasContracts.pool.address,
+      abi: atlasContracts.pool.abi,
+      functionName: 'getPoolSnapshot',
+    })
+
+    poolUsdcAddress = poolSnapshot[0]
+    linkedClaimsAddress = poolSnapshot[5]
+  } catch (error) {
+    const stale = readStaleCache(arcHealthCache, cacheKey)
+    if (stale) {
+      return stale
+    }
+
+    if (isRpcLimitError(error)) {
+      return {
+        poolUsdcAddress: atlasContracts.usdc.address,
+        linkedClaimsAddress: atlasContracts.claims.address,
+        rpcDegraded: true,
+      }
+    }
+
+    throw error
+  }
 
   if (normalizeAddress(poolUsdcAddress) !== normalizeAddress(atlasContracts.usdc.address)) {
     throw new Error(
@@ -100,41 +183,55 @@ export async function assertArcContractsHealthy() {
     )
   }
 
-  return {
+  return writeReadCache(arcHealthCache, cacheKey, {
     poolUsdcAddress,
     linkedClaimsAddress,
-  }
+  })
 }
 
 export async function readArcOverview(walletAddress) {
-  const [poolSnapshot, memberPremium] = await Promise.all([
-    atlasContracts.pool.address
-      ? arcPublicClient.readContract({
-          address: atlasContracts.pool.address,
-          abi: atlasContracts.pool.abi,
-          functionName: 'getPoolSnapshot',
-        })
-      : Promise.resolve([
-          atlasContracts.usdc.address,
-          '0x0000000000000000000000000000000000000000',
-          1000,
-          0n,
-          0n,
-          '0x0000000000000000000000000000000000000000',
-        ]),
-    walletAddress && atlasContracts.pool.address
-      ? arcPublicClient.readContract({
-          address: atlasContracts.pool.address,
-          abi: atlasContracts.pool.abi,
-          functionName: 'premiumByMember',
-          args: [walletAddress],
-        })
-      : Promise.resolve(0n),
-  ])
+  const cacheKey = `${normalizeAddress(walletAddress)}:${normalizeAddress(atlasContracts.pool.address)}`
+  const fresh = readFreshCache(arcOverviewCache, cacheKey)
+  if (fresh) {
+    return fresh
+  }
 
-  return {
-    poolSnapshot,
-    memberPremium,
+  try {
+    const [poolSnapshot, memberPremium] = await Promise.all([
+      atlasContracts.pool.address
+        ? arcPublicClient.readContract({
+            address: atlasContracts.pool.address,
+            abi: atlasContracts.pool.abi,
+            functionName: 'getPoolSnapshot',
+          })
+        : Promise.resolve([
+            atlasContracts.usdc.address,
+            '0x0000000000000000000000000000000000000000',
+            1000,
+            0n,
+            0n,
+            '0x0000000000000000000000000000000000000000',
+          ]),
+      walletAddress && atlasContracts.pool.address
+        ? arcPublicClient.readContract({
+            address: atlasContracts.pool.address,
+            abi: atlasContracts.pool.abi,
+            functionName: 'premiumByMember',
+            args: [walletAddress],
+          })
+        : Promise.resolve(0n),
+    ])
+
+    return writeReadCache(arcOverviewCache, cacheKey, {
+      poolSnapshot,
+      memberPremium,
+    })
+  } catch (error) {
+    const stale = readStaleCache(arcOverviewCache, cacheKey)
+    if (stale) {
+      return stale
+    }
+    throw error
   }
 }
 
@@ -154,71 +251,85 @@ export async function readRecentArcClaims(limit = CLAIM_SCAN_LIMIT) {
     return []
   }
 
-  const nextClaimId = await arcPublicClient.readContract({
-    address: atlasContracts.claims.address,
-    abi: atlasContracts.claims.abi,
-    functionName: 'nextClaimId',
-  })
-
-  const highestClaimId = Number(nextClaimId) - 1
-  if (highestClaimId < 1) {
-    return []
+  const cacheKey = `${normalizeAddress(atlasContracts.claims.address)}:${Number(limit)}`
+  const fresh = readFreshCache(recentClaimsCache, cacheKey)
+  if (fresh) {
+    return fresh
   }
 
-  const firstClaimId = Math.max(1, highestClaimId - Number(limit) + 1)
-  const claimIds = []
+  try {
+    const nextClaimId = await arcPublicClient.readContract({
+      address: atlasContracts.claims.address,
+      abi: atlasContracts.claims.abi,
+      functionName: 'nextClaimId',
+    })
 
-  for (let claimId = highestClaimId; claimId >= firstClaimId; claimId -= 1) {
-    claimIds.push(claimId)
+    const highestClaimId = Number(nextClaimId) - 1
+    if (highestClaimId < 1) {
+      return writeReadCache(recentClaimsCache, cacheKey, [])
+    }
+
+    const firstClaimId = Math.max(1, highestClaimId - Number(limit) + 1)
+    const claimIds = []
+
+    for (let claimId = highestClaimId; claimId >= firstClaimId; claimId -= 1) {
+      claimIds.push(claimId)
+    }
+
+    const claims = await Promise.all(
+      claimIds.map(async (claimId) => {
+        const claimTuple = await arcPublicClient.readContract({
+          address: atlasContracts.claims.address,
+          abi: atlasContracts.claims.abi,
+          functionName: 'claims',
+          args: [BigInt(claimId)],
+        })
+
+        const [
+          member,
+          category,
+          evidenceUri,
+          description,
+          requestedAmount,
+          approvedAmount,
+          status,
+          submittedAt,
+          verdictUri,
+          externalReference,
+          juryReference,
+        ] = claimTuple
+
+        const statusDetails = getClaimStatusDetails(status)
+
+        return {
+          id: claimId,
+          arcClaimId: claimId,
+          walletAddress: member,
+          category,
+          description,
+          evidenceUri,
+          requestedAmount: formatUsdc(requestedAmount),
+          requestedAmountUsdc: formatUsdc(requestedAmount),
+          payoutAmountUsdc: formatUsdc(approvedAmount),
+          approved: statusDetails.approved,
+          status: statusDetails.status,
+          verdictUri,
+          externalReference,
+          juryReference,
+          createdAt: new Date(Number(submittedAt) * 1000).toISOString(),
+          reason: statusDetails.reason,
+        }
+      }),
+    )
+
+    return writeReadCache(recentClaimsCache, cacheKey, claims.filter(Boolean))
+  } catch (error) {
+    const stale = readStaleCache(recentClaimsCache, cacheKey)
+    if (stale) {
+      return stale
+    }
+    throw error
   }
-
-  const claims = await Promise.all(
-    claimIds.map(async (claimId) => {
-      const claimTuple = await arcPublicClient.readContract({
-        address: atlasContracts.claims.address,
-        abi: atlasContracts.claims.abi,
-        functionName: 'claims',
-        args: [BigInt(claimId)],
-      })
-
-      const [
-        member,
-        category,
-        evidenceUri,
-        description,
-        requestedAmount,
-        approvedAmount,
-        status,
-        submittedAt,
-        verdictUri,
-        externalReference,
-        juryReference,
-      ] = claimTuple
-
-      const statusDetails = getClaimStatusDetails(status)
-
-      return {
-        id: claimId,
-        arcClaimId: claimId,
-        walletAddress: member,
-        category,
-        description,
-        evidenceUri,
-        requestedAmount: formatUsdc(requestedAmount),
-        requestedAmountUsdc: formatUsdc(requestedAmount),
-        payoutAmountUsdc: formatUsdc(approvedAmount),
-        approved: statusDetails.approved,
-        status: statusDetails.status,
-        verdictUri,
-        externalReference,
-        juryReference,
-        createdAt: new Date(Number(submittedAt) * 1000).toISOString(),
-        reason: statusDetails.reason,
-      }
-    }),
-  )
-
-  return claims.filter(Boolean)
 }
 
 export async function readLatestPremiumDepositByMember(walletAddress) {
@@ -310,6 +421,7 @@ export async function sponsorCardDeposit({ walletAddress, amountUsdc }) {
     args: [walletAddress, amount],
   })
   await arcPublicClient.waitForTransactionReceipt({ hash: depositHash })
+  invalidateArcReadCaches()
 
   return {
     approvalHash,
@@ -374,6 +486,7 @@ export async function verifyWalletDeposit({
       blockNumber: receipt.blockNumber,
     },
   })
+  invalidateArcReadCaches()
 
   return {
     receipt,
@@ -465,6 +578,8 @@ export async function submitClaimOnArc({
     }
   }
 
+  invalidateArcReadCaches()
+
   return {
     claimHash,
     claimId,
@@ -482,6 +597,7 @@ export async function queueClaimOnArc({ claimId, juryReference }) {
     args: [BigInt(claimId), juryReference],
   })
   await arcPublicClient.waitForTransactionReceipt({ hash })
+  invalidateArcReadCaches()
   return hash
 }
 
@@ -502,5 +618,6 @@ export async function resolveClaimOnArc({
     args: [BigInt(claimId), approved, payoutAmount, verdictUri, juryReference],
   })
   await arcPublicClient.waitForTransactionReceipt({ hash })
+  invalidateArcReadCaches()
   return { hash, payoutAmount }
 }
