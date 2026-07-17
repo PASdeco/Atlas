@@ -1,8 +1,17 @@
-import { createPublicClient, createWalletClient, custom, formatUnits, http, parseUnits } from 'viem'
+import {
+  createPublicClient,
+  createWalletClient,
+  custom,
+  fallback,
+  formatUnits,
+  http,
+  parseUnits,
+} from 'viem'
 import { atlasPoolAbi, erc20Abi } from '../../shared/atlasAbis'
 import {
   ARC_TESTNET_CHAIN,
   ARC_TESTNET_RPC_URL,
+  ARC_TESTNET_RPC_URLS,
   ARC_TESTNET_USDC_ADDRESS,
 } from '../../shared/atlasNetworks'
 
@@ -20,6 +29,41 @@ function parseUsdcAmount(amountUsdc) {
   }
 
   return parseUnits(normalized.toFixed(usdcDecimals), usdcDecimals)
+}
+
+function parseUrlList(value) {
+  return String(value || '')
+    .split(/[,\s]+/)
+    .map((url) => url.trim())
+    .filter(Boolean)
+}
+
+function getArcRpcUrls() {
+  return [
+    ...new Set([
+      import.meta.env.VITE_ARC_RPC_URL || ARC_TESTNET_RPC_URL,
+      ...parseUrlList(import.meta.env.VITE_ARC_RPC_FALLBACK_URLS),
+      ...ARC_TESTNET_RPC_URLS,
+    ]),
+  ]
+}
+
+function createArcPublicTransport() {
+  const transports = getArcRpcUrls().map((url) =>
+    http(url, {
+      retryCount: 1,
+      timeout: 12_000,
+    }),
+  )
+
+  if (transports.length === 1) {
+    return transports[0]
+  }
+
+  return fallback(transports, {
+    rank: false,
+    retryCount: 0,
+  })
 }
 
 export async function depositPremiumWithWallet({
@@ -44,7 +88,7 @@ export async function depositPremiumWithWallet({
   })
   const publicClient = createPublicClient({
     chain: ARC_TESTNET_CHAIN,
-    transport: http(import.meta.env.VITE_ARC_RPC_URL || ARC_TESTNET_RPC_URL),
+    transport: createArcPublicTransport(),
   })
 
   const [poolUsdcAddress, , , , , linkedClaimsAddress] = await publicClient.readContract({

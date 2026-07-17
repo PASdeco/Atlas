@@ -1,5 +1,11 @@
 export const ARC_TESTNET_CHAIN_ID = 5042002
-export const ARC_TESTNET_RPC_URL = 'https://rpc.testnet.arc.network'
+export const ARC_TESTNET_RPC_URLS = [
+  'https://rpc.quicknode.testnet.arc.io',
+  'https://rpc.drpc.testnet.arc.io',
+  'https://rpc.blockdaemon.testnet.arc.io',
+  'https://rpc.testnet.arc.io',
+]
+export const ARC_TESTNET_RPC_URL = ARC_TESTNET_RPC_URLS[0]
 export const ARC_TESTNET_EXPLORER_URL = 'https://testnet.arcscan.app'
 export const ARC_TESTNET_USDC_ADDRESS = '0x3600000000000000000000000000000000000000'
 
@@ -18,7 +24,7 @@ export const ARC_TESTNET_CHAIN = {
   },
   rpcUrls: {
     default: {
-      http: [ARC_TESTNET_RPC_URL],
+      http: ARC_TESTNET_RPC_URLS,
     },
   },
   blockExplorers: {
