@@ -5,7 +5,7 @@ import hardhatIgnitionPlugin from '@nomicfoundation/hardhat-ignition'
 dotenvConfig({ path: '../../.env' })
 dotenvConfig()
 
-const arcRpcUrl = process.env.ARC_RPC_URL || 'https://rpc.testnet.arc.network'
+const arcRpcUrl = process.env.ARC_RPC_URL || 'https://rpc.quicknode.testnet.arc.io'
 const arcPrivateKey = process.env.ARC_DEPLOYER_PRIVATE_KEY
 
 export default {
